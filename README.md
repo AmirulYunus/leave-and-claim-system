@@ -22,7 +22,7 @@ Open http://localhost:3000. Prisma migrations are tracked in `_prisma_migrations
 
 ## Roles and employee management
 
-Select **HR** or **Admin**, then open **Employees** to add a profile with name, email, and join date. HR creates only Employee profiles and edits ordinary employee records. Admin can assign Employee, HR, or Admin roles. Existing profile emails are read-only. At least one Admin must remain.
+Select **HR** or **Admin**, then open **Employees** to add a profile with name, email, and join date. HR creates Employee and HR profiles and edits ordinary employee records. Admin creates Admin profiles and assigns Employee, HR, or Admin roles. Existing profile emails are read-only. At least one Admin must remain.
 
 The `20261006000200_split_roles` migration changes the old combined role to HR and permits three distinct roles. Apply it with `npm run db:migrate`, then run `npm run db:seed` to create the separate Admin preview profile. No reset is required.
 

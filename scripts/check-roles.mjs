@@ -8,6 +8,7 @@ const prefix = `roles-${Date.now()}`;
 const createdEmails = [
   `${prefix}@example.test`,
   `${prefix}-admin@example.test`,
+  `${prefix}-hr@example.test`,
 ];
 
 async function api(path, role, method = "GET", body, expected = 200) {
@@ -38,8 +39,19 @@ try {
     { id: 1, status: "Approved" },
     403,
   );
-  await api("employees", "HR", "POST", { ...input, role: "HR" }, 403);
   await api("employees", "HR", "POST", { ...input, role: "Admin" }, 403);
+  await api(
+    "employees",
+    "HR",
+    "POST",
+    { ...input, email: createdEmails[2], role: "HR" },
+    201,
+  );
+  const createdHr = (await api("employees", "HR")).employees.find(
+    (person) => person.email === createdEmails[2],
+  );
+  assert.equal(createdHr.role, "HR");
+  await api("employees", "HR", "PATCH", createdHr, 403);
   await api("employees", "HR", "POST", input, 201);
   await api("employees", "HR", "POST", input, 409);
   const listing = await api("employees", "HR");
@@ -70,7 +82,7 @@ try {
   assert.equal((await api("workspace", "HR")).employee.role, "HR");
   assert.equal((await api("workspace", "Admin")).employee.role, "Admin");
   console.log(
-    "PASS: Employee access denied; HR creates/edits employees but cannot grant privileged roles; Admin creates and assigns roles; requests scoped by employee ID.",
+    "PASS: Employee access denied; HR creates Employee and HR profiles, edits Employee profiles, and cannot create Admin or assign roles; Admin creates and assigns roles; requests scoped by employee ID.",
   );
 } catch (error) {
   console.error(error.message);

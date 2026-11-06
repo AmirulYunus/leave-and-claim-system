@@ -1015,7 +1015,10 @@ export default function Home() {
               <div className="requests-heading">
                 <div>
                   <h2>Employees</h2>
-                  <p>HR can add and edit employees. Admin manages all roles.</p>
+                  <p>
+                    HR can add Employee and HR profiles and edit Employee
+                    profiles. Admin manages all roles.
+                  </p>
                 </div>
               </div>
               <div className="table-scroll">
@@ -1135,12 +1138,10 @@ export default function Home() {
                     defaultValue={employeeEditor.role ?? "Employee"}
                   >
                     <option>Employee</option>
-                    {employee.role === "Admin" && (
-                      <>
-                        <option>HR</option>
-                        <option>Admin</option>
-                      </>
+                    {(employee.role === "Admin" || !employeeEditor.id) && (
+                      <option>HR</option>
                     )}
+                    {employee.role === "Admin" && <option>Admin</option>}
                   </select>
                 </label>
               </div>

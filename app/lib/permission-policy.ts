@@ -2,6 +2,7 @@
 export const permissions = [
   "user.view",
   "user.create",
+  "user.createHr",
   "user.update",
   "user.assignRole",
   "user.updatePrivileged",
@@ -27,6 +28,7 @@ const rolePermissions: Record<string, readonly Permission[]> = {
     ...employeePermissions,
     "user.view",
     "user.create",
+    "user.createHr",
     "user.update",
     "request.viewAll",
     "leave.approve",

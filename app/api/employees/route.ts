@@ -67,7 +67,7 @@ export async function GET(request: Request) {
   }
 }
 
-// HR can create Employee profiles. Admin can also create HR and Admin profiles.
+// HR can create Employee and HR profiles. Only Admin can create Admin profiles.
 export async function POST(request: Request) {
   const blocked = checkDevelopmentAccess(request);
   if (blocked) return blocked;
@@ -106,7 +106,13 @@ export async function POST(request: Request) {
           { status: 403 },
         );
       if (role !== "Employee")
-        if (!(await hasPermission(actor.id, "user.assignRole", tx)))
+        if (
+          !(await hasPermission(
+            actor.id,
+            role === "HR" ? "user.createHr" : "user.assignRole",
+            tx,
+          ))
+        )
           return Response.json(
             { error: "Forbidden", message: "Forbidden" },
             { status: 403 },

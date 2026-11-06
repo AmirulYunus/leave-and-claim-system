@@ -32,30 +32,122 @@ model cost_centres {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model employees {
-  id                     Int                 @id @default(autoincrement())
-  name                   String
-  email                  String              @unique
-  join_date              DateTime            @db.Date
+  id                      Int                        @id @default(autoincrement())
+  name                    String
+  email                   String                     @unique
+  join_date               DateTime                   @db.Date
   /// Employee, HR, or Admin; enforced by a PostgreSQL CHECK constraint.
-  role                   String
-  position               String?
+  role                    String
+  position                String?
   /// Full-time, Part-time, or Intern; null until HR supplies it.
-  employment_type        String?
+  employment_type         String?
   /// 1-4; null until HR supplies it.
-  employee_level         Int?                @db.SmallInt
-  probation_completed_on DateTime?           @db.Date
-  leaving_date           DateTime?           @db.Date
-  is_active              Boolean             @default(true)
-  department_id          Int?
-  cost_centre_id         Int?
-  password_hash          String?
-  must_change_password   Boolean             @default(true)
-  sessions               sessions[]
-  department             departments?        @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  cost_centre            cost_centres?       @relation(fields: [cost_centre_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  submittedRequests      requests[]          @relation("requests_employee_idToemployees")
-  reviewedRequests       requests[]          @relation("requests_reviewed_byToemployees")
-  timesheet_entries      timesheet_entries[]
+  employee_level          Int?                       @db.SmallInt
+  probation_completed_on  DateTime?                  @db.Date
+  leaving_date            DateTime?                  @db.Date
+  is_active               Boolean                    @default(true)
+  department_id           Int?
+  cost_centre_id          Int?
+  password_hash           String?
+  must_change_password    Boolean                    @default(true)
+  sessions                sessions[]
+  attachments             attachments[]
+  carryForwardExceptions  carry_forward_exceptions[] @relation("carry_forward_exceptions_employee_idToemployees")
+  recordedCarryExceptions carry_forward_exceptions[] @relation("carry_forward_exceptions_recorded_byToemployees")
+  carryForwards           carry_forwards[]           @relation("carry_forwards_employee_idToemployees")
+  confirmedCarryForwards  carry_forwards[]           @relation("carry_forwards_confirmed_byToemployees")
+  requestedCancellations  cancellations[]            @relation("cancellations_requested_byToemployees")
+  reviewedCancellations   cancellations[]            @relation("cancellations_reviewed_byToemployees")
+  department              departments?               @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  cost_centre             cost_centres?              @relation(fields: [cost_centre_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  submittedRequests       requests[]                 @relation("requests_employee_idToemployees")
+  reviewedRequests        requests[]                 @relation("requests_reviewed_byToemployees")
+  timesheet_entries       timesheet_entries[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model attachments {
+  id           Int       @id @default(autoincrement())
+  request_id   Int
+  file_name    String
+  content_type String
+  size_bytes   Int
+  /// Random key in the storage backend; never derived from the file name.
+  storage_key  String    @unique
+  uploaded_by  Int
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  request      requests  @relation(fields: [request_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  uploader     employees @relation(fields: [uploaded_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([request_id], map: "attachments_request")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model cancellations {
+  id           Int        @id @default(autoincrement())
+  request_id   Int
+  /// Cancellation (employee, future leave) or Correction (HR, started Emergency leave).
+  kind         String
+  reason       String
+  status       String     @default("Pending")
+  requested_by Int
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  reviewed_by  Int?
+  reviewed_at  DateTime?  @db.Timestamptz(6)
+  request      requests   @relation(fields: [request_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  requester    employees  @relation("cancellations_requested_byToemployees", fields: [requested_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reviewer     employees? @relation("cancellations_reviewed_byToemployees", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([request_id], map: "cancellations_request")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model carry_forward_exceptions {
+  id                 Int       @id @default(autoincrement())
+  employee_id        Int
+  source_year        Int
+  limit_hours        Int
+  document_reference String
+  recorded_by        Int
+  recorded_at        DateTime  @default(now()) @db.Timestamptz(6)
+  employee           employees @relation("carry_forward_exceptions_employee_idToemployees", fields: [employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  recorder           employees @relation("carry_forward_exceptions_recorded_byToemployees", fields: [recorded_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([employee_id, source_year])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model carry_forwards {
+  id                 Int       @id @default(autoincrement())
+  employee_id        Int
+  source_year        Int
+  unused_hours       Int
+  limit_hours        Int
+  carry_hours        Int
+  reason             String?
+  document_reference String?
+  confirmed_by       Int
+  confirmed_at       DateTime  @default(now()) @db.Timestamptz(6)
+  employee           employees @relation("carry_forwards_employee_idToemployees", fields: [employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  confirmer          employees @relation("carry_forwards_confirmed_byToemployees", fields: [confirmed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([employee_id, source_year])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model notifications {
+  id         Int       @id @default(autoincrement())
+  recipient  String
+  subject    String
+  body       String
+  /// Set for scheduled messages so a rerun cannot queue a duplicate.
+  dedupe_key String?   @unique
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  attempts   Int       @default(0)
+  sent_at    DateTime? @db.Timestamptz(6)
+  last_error String?
+
+  @@index([sent_at], map: "notifications_sent_at")
 }
 
 model sessions {
@@ -82,20 +174,36 @@ model leave_entries {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model requests {
-  id            Int             @id @default(autoincrement())
-  employee_id   Int
-  kind          String
-  category      String
-  detail        String
-  note          String
-  status        String          @default("Pending")
-  created_at    DateTime        @default(now()) @db.Timestamptz(6)
-  reviewed_by   Int?
-  reviewed_at   DateTime?       @db.Timestamptz(6)
-  claims        claims?
-  leave_entries leave_entries[]
-  employee      employees       @relation("requests_employee_idToemployees", fields: [employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  reviewer      employees?      @relation("requests_reviewed_byToemployees", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                  Int             @id @default(autoincrement())
+  employee_id         Int
+  kind                String
+  category            String
+  detail              String
+  note                String
+  status              String          @default("Pending")
+  created_at          DateTime        @default(now()) @db.Timestamptz(6)
+  reviewed_by         Int?
+  reviewed_at         DateTime?       @db.Timestamptz(6)
+  /// Expected confinement (maternity) or expected birth (paternity) date.
+  expected_birth_on   DateTime?       @db.Date
+  /// Actual birth date; paternity leave must start on it.
+  birth_on            DateTime?       @db.Date
+  notified_on         DateTime?       @db.Date
+  /// Company Required or Employee-Requested External.
+  training_category   String?
+  /// Official marriage registration date and first-legal-marriage declaration.
+  registered_on       DateTime?       @db.Date
+  first_marriage      Boolean?
+  /// Hours funded by carry-forward, fixed when the request is approved.
+  carry_forward_hours Decimal         @default(0) @db.Decimal
+  /// Compassionate leave relationship; enforced by a CHECK constraint.
+  relationship        String?
+  claims              claims?
+  leave_entries       leave_entries[]
+  attachments         attachments[]
+  employee            employees       @relation("requests_employee_idToemployees", fields: [employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reviewer            employees?      @relation("requests_reviewed_byToemployees", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  cancellations       cancellations[]
 
   @@index([employee_id, status], map: "requests_employee_status")
 }

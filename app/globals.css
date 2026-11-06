@@ -673,6 +673,16 @@ td {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.request-document {
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+  color: #3e7a58;
+  text-decoration: underline;
+  cursor: pointer;
+  max-width: 250px;
+  overflow-wrap: anywhere;
+}
 .amount {
   font-weight: 500;
   color: #58665b;
@@ -702,6 +712,21 @@ td {
 .rejected {
   background: #fbebea;
   color: #ba736d;
+}
+.status.cancelled {
+  background: #eef0f2;
+  color: #7c858d;
+}
+.request-action {
+  display: block;
+  margin-top: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 10px;
+  color: #3e7a58;
+  text-decoration: underline;
+  cursor: pointer;
 }
 .table-footer {
   display: flex;

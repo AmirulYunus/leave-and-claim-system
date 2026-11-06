@@ -9,6 +9,15 @@ import {
   type LeaveEntry,
 } from "./lib/time";
 import {
+  balanceCategory,
+  compassionateRelationships,
+  fixedLengthDays,
+  leaveCategories,
+  scheduleDates,
+  trainingCategories,
+  type LeaveDetails,
+} from "./lib/leave-types";
+import {
   employeeLevels,
   employmentTypes,
   type EmploymentDetails,
@@ -38,6 +47,35 @@ type Entitlements = {
   annual: Allowance;
   medical: Allowance;
   hospitalisation: Allowance;
+  carryForward: {
+    hours: number;
+    remaining: number;
+    used: number;
+    useBy: string;
+  };
+};
+type CarryForwardRow = {
+  employee_id: number;
+  name: string;
+  draft: {
+    unusedHours: number;
+    limit: number;
+    carry: number;
+    remainder: number;
+  };
+  exception: { limit_hours: number; document_reference: string } | null;
+  confirmed: {
+    carry_hours: number;
+    unused_hours: number;
+    reason: string | null;
+  } | null;
+};
+type CarryForwardView = {
+  sourceYear: number;
+  provisional: boolean;
+  canRecordException: boolean;
+  canConfirm: boolean;
+  rows: CarryForwardRow[];
 };
 const allowanceKeys: Record<string, keyof Entitlements> = {
   "Annual leave": "annual",
@@ -58,9 +96,61 @@ type Request = {
   category: string;
   detail: string;
   value: number;
-  status: "Pending" | "Approved" | "Rejected";
+  status: "Pending" | "Approved" | "Rejected" | "Cancelled";
   note: string;
   entries?: LeaveEntry[];
+  details?: LeaveDetails;
+  attachments?: { id: number; file_name: string; size_bytes: number }[];
+  cancellations?: {
+    id: number;
+    kind: "Cancellation" | "Correction";
+    status: "Pending" | "Approved" | "Rejected";
+    reason: string;
+  }[];
+};
+const pendingCancellation = (request: Request) =>
+  request.cancellations?.find((item) => item.status === "Pending");
+// Category details shown under a request, e.g. birth and notice dates.
+function requestFacts(request: Request) {
+  const details = request.details;
+  if (!details) return "";
+  const expected =
+    request.category === "Maternity leave"
+      ? "Expected confinement"
+      : "Expected birth";
+  return [
+    details.training_category,
+    details.relationship,
+    details.registered_on && `Registered ${dateLabel(details.registered_on)}`,
+    details.expected_birth_on &&
+      `${expected} ${dateLabel(details.expected_birth_on)}`,
+    details.birth_on && `Born ${dateLabel(details.birth_on)}`,
+    details.notified_on && `Notice ${dateLabel(details.notified_on)}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+const leaveHelp: Record<string, string> = {
+  "Annual leave":
+    "Every weekday from the start to the end date, as half days (4 hours) or full days (8 hours). Public holidays are not excluded automatically; choose the dates you need.",
+  "Medical leave":
+    "Weekdays covered by your medical certificate, as half or full days. Apply within 48 hours of the start date and attach the certificate: HR cannot approve without it.",
+  "Hospitalisation leave":
+    "Weekdays covered by your certificate, as half or full days. Attach the certificate: HR cannot approve without it.",
+  "Emergency leave":
+    "For unexpected emergencies; you may apply after the leave. Upload supporting evidence: HR cannot approve without it. Approved hours are charged to Annual Leave.",
+  "Training leave":
+    "Company-required training is not charged. Employee-requested external training is charged to Annual Leave.",
+  "Maternity leave":
+    "98 consecutive calendar days from the start date. HR assesses eligibility and notice.",
+  "Paternity leave":
+    "7 consecutive calendar days starting on the birth date. Requires 12 months of service; HR verifies the birth date before approving.",
+  "Marriage leave":
+    "3 consecutive calendar days for your first legal marriage, after registration and within 12 months of it. Attach the marriage certificate; probation must be complete.",
+  "Compassionate leave":
+    "3 consecutive calendar days for a close family member. Attach a supporting document: HR cannot approve without it.",
+  "Unpaid leave":
+    "Weekends excluded. Unpaid leave does not use any paid balance.",
 };
 const money = (value: number) => `RM ${value.toFixed(2)}`;
 const dateLabel = (value: string) =>
@@ -184,6 +274,9 @@ export default function Home() {
     departments: [],
     costCentres: [],
   });
+  const [carryForward, setCarryForward] = useState<CarryForwardView | null>(
+    null,
+  );
   const [employeeEditor, setEmployeeEditor] =
     useState<Partial<Employee> | null>(null);
   const canManageEmployees = loaded && ["HR", "Admin"].includes(employee.role);
@@ -198,13 +291,15 @@ export default function Home() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [leaveCategory, setLeaveCategory] = useState("Annual leave");
-  const [leaveHours, setLeaveHours] = useState<Record<string, string>>({});
-  const isMedical =
-    leaveCategory === "Medical leave" ||
-    leaveCategory === "Hospitalisation leave";
-  const leaveDates = datesBetween(startDate, endDate).filter(
-    (date) => isMedical || isWeekday(date),
-  );
+  const [uniformHours, setUniformHours] = useState("8");
+  const [trainingCategory, setTrainingCategory] = useState("");
+  const fixedDays = fixedLengthDays[leaveCategory];
+  const leaveDates = startDate
+    ? scheduleDates(leaveCategory, startDate, endDate)
+    : [];
+  const leaveEnd = fixedDays ? (leaveDates.at(-1) ?? "") : endDate;
+  // Fixed-length leave is taken in full days; other leave uses one duration.
+  const leaveHoursPerDate = fixedDays ? 8 : Number(uniformHours);
   const monthDates = month
     ? datesBetween(
         `${month}-01`,
@@ -214,14 +309,24 @@ export default function Home() {
   const mine = requests.filter(
     (request) => request.employee_id === employee.id,
   );
-  const pending = requests.filter((request) => request.status === "Pending");
-  // Hours of a category this year in requests with one of the given statuses.
-  const usedHours = (category: string, statuses: Request["status"][]) =>
+  const pending = requests.filter(
+    (request) =>
+      request.status === "Pending" || Boolean(pendingCancellation(request)),
+  );
+  const today = entitlements?.asOf ?? "";
+  const started = (request: Request) =>
+    (request.entries ?? []).some((entry) => entry.date <= today);
+  // Hours charged to a balance this year by requests with the given statuses.
+  // Emergency and external training leave are charged to Annual Leave.
+  const usedHours = (balance: string, statuses: Request["status"][]) =>
     mine
       .filter(
         (request) =>
           request.kind === "Leave" &&
-          request.category === category &&
+          balanceCategory(
+            request.category,
+            request.details?.training_category ?? null,
+          ) === balance &&
           statuses.includes(request.status),
       )
       .flatMap((request) => request.entries ?? [])
@@ -232,7 +337,10 @@ export default function Home() {
     return key ? (entitlements?.[key] as Allowance | undefined) : undefined;
   };
   const annual = entitlements?.annual;
-  const annualUsed = usedHours("Annual leave", ["Approved"]);
+  // Earned annual hours used; hours funded by carry-forward are counted there.
+  const carried = entitlements?.carryForward;
+  const annualUsed =
+    usedHours("Annual leave", ["Approved"]) - (carried?.used ?? 0);
   const annualAvailable =
     annual?.hours == null ? null : annual.hours - annualUsed;
   const medical = entitlements?.medical;
@@ -311,6 +419,33 @@ export default function Home() {
     const data = await response.json();
     if (response.status === 401) setAuth("signedOut");
     if (!response.ok) throw new Error(data.error);
+    return data;
+  }
+  async function uploadDocument(requestId: number, file: File) {
+    const form = new FormData();
+    form.set("request_id", String(requestId));
+    form.set("file", file);
+    const response = await fetch("/api/attachments", {
+      method: "POST",
+      body: form,
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+  }
+  async function attachDocument(requestId: number, file: File | undefined) {
+    if (busy || !file) return;
+    setBusy(true);
+    try {
+      await uploadDocument(requestId, file);
+      await refresh();
+      setMessage("Document attached.");
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error ? error.message : "Could not attach document.",
+      );
+    } finally {
+      setBusy(false);
+    }
   }
   async function signOut() {
     if (busy) return;
@@ -352,22 +487,24 @@ export default function Home() {
     const category = String(data.get("category"));
     let value = Number(data.get("amount"));
     let detail = String(data.get("description") || "");
+    const entries = leaveDates.map((date) => ({
+      date,
+      hours: leaveHoursPerDate,
+    }));
+    const documentFile = data.get("document");
     if (modal === "Leave") {
-      const entries = leaveDates.map((date) => ({
-        date,
-        hours: isMedical ? 8 : Number(leaveHours[date] ?? "8"),
-      }));
-      if (startDate.slice(0, 4) !== endDate.slice(0, 4)) {
+      if (!fixedDays && startDate.slice(0, 4) !== endDate.slice(0, 4)) {
         setError("Submit separate requests for each calendar year.");
         return;
       }
-      if (startDate.slice(0, 4) !== String(entitlements?.year)) {
+      if (!fixedDays && startDate.slice(0, 4) !== String(entitlements?.year)) {
         setError(
           `Leave can be requested for ${entitlements?.year} dates only.`,
         );
         return;
       }
-      const allowance = allowanceFor(category);
+      const balance = balanceCategory(category, trainingCategory || null);
+      const allowance = balance ? allowanceFor(balance) : undefined;
       if (allowance && allowance.hours === null) {
         setError(`${category} is unavailable: ${allowance.reason}`);
         return;
@@ -378,8 +515,19 @@ export default function Home() {
       const validation = validateLeave(
         entries,
         existing,
-        (allowance?.hours ?? Infinity) -
-          usedHours(category, ["Pending", "Approved"]),
+        balance && allowance?.hours != null
+          ? allowance.hours -
+              usedHours(balance, ["Pending", "Approved"]) +
+              (balance === "Annual leave" && carried
+                ? carried.used +
+                  Math.min(
+                    carried.remaining,
+                    entries
+                      .filter((entry) => entry.date <= carried.useBy)
+                      .reduce((sum, entry) => sum + entry.hours, 0),
+                  )
+                : 0)
+          : Infinity,
       );
       if (validation) {
         setError(validation);
@@ -402,30 +550,36 @@ export default function Home() {
         return;
       }
       value = entries.reduce((sum, e) => sum + e.hours, 0) / 8;
-      detail = `${dateLabel(startDate)} – ${dateLabel(endDate)}`;
+      detail = `${dateLabel(startDate)} – ${dateLabel(leaveEnd)}`;
     } else if (!Number.isFinite(value) || value <= 0) {
       setError("Enter a claim amount greater than zero.");
       return;
     }
     setBusy(true);
     try {
-      await persist("POST", {
+      const saved = await persist("POST", {
         kind: modal,
         category,
         detail,
         value,
         note: String(data.get("note")),
-        entries:
-          modal === "Leave"
-            ? leaveDates.map((date) => ({
-                date,
-                hours: isMedical ? 8 : Number(leaveHours[date] ?? "8"),
-              }))
-            : [],
+        entries: modal === "Leave" ? entries : [],
+        expected_birth_on: data.get("expected_birth_on"),
+        birth_on: data.get("birth_on"),
+        notified_on: data.get("notified_on"),
+        training_category: data.get("training_category"),
+        registered_on: data.get("registered_on"),
+        first_marriage: data.get("first_marriage") === "on",
+        relationship: data.get("relationship"),
       });
+      let note = "";
+      if (documentFile instanceof File && documentFile.size > 0)
+        await uploadDocument(saved.id, documentFile).catch((error) => {
+          note = ` The document was not attached: ${error.message} Attach it from the request list.`;
+        });
       await refresh();
       setMessage(
-        `${modal === "Leave" ? "Leave request" : "Claim"} saved for HR review.`,
+        `${modal === "Leave" ? "Leave request" : "Claim"} saved for HR review.${note}`,
       );
       setModal(null);
       setError("");
@@ -445,21 +599,30 @@ export default function Home() {
     }
     const target = requests.find((r) => r.id === id);
     if (!target || target.status !== "Pending") return;
-    const medicalVerified = ["Medical leave", "Hospitalisation leave"].includes(
-      target.category,
-    )
-      ? window.confirm(
-          "Have you verified medical certification, notification, and statutory eligibility? A rejection must have a lawful basis.",
-        )
-      : false;
     if (
+      status === "Approved" &&
       ["Medical leave", "Hospitalisation leave"].includes(target.category) &&
-      !medicalVerified
+      target.attachments?.length &&
+      !window.confirm(
+        "Have you checked that the attached medical certificate is valid and covers these dates?",
+      )
     )
       return;
+    let birth_on: string | null | undefined;
+    if (
+      target.category === "Paternity leave" &&
+      status === "Approved" &&
+      !target.details?.birth_on
+    ) {
+      birth_on = window.prompt(
+        "Enter the verified birth date (YYYY-MM-DD). Paternity leave must start on it.",
+        target.details?.expected_birth_on ?? "",
+      );
+      if (!birth_on) return;
+    }
     setBusy(true);
     try {
-      await persist("PATCH", { id, status, medicalVerified });
+      await persist("PATCH", { id, status, birth_on });
       await refresh();
       setMessage(`Request ${status.toLowerCase()} and saved.`);
     } catch (error) {
@@ -470,9 +633,63 @@ export default function Home() {
       setBusy(false);
     }
   }
+  async function sendCancellation(method: "POST" | "PATCH", body: object) {
+    const response = await fetch("/api/cancellations", {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+  }
+  async function requestCancellation(target: Request) {
+    if (busy) return;
+    const reason = window.prompt(
+      target.employee_id === employee.id
+        ? "Why do you want to cancel this leave? HR will review the cancellation; the leave stays approved until then."
+        : "Why does this Emergency leave need correcting? The leave will be cancelled and its Annual Leave hours restored once the correction is approved.",
+    );
+    if (!reason?.trim()) return;
+    setBusy(true);
+    try {
+      await sendCancellation("POST", { request_id: target.id, reason });
+      await refresh();
+      setMessage("Cancellation sent to HR for review.");
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error
+          ? error.message
+          : "Could not request cancellation.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function decideCancellation(
+    id: number,
+    status: "Approved" | "Rejected",
+  ) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await sendCancellation("PATCH", { id, status });
+      await refresh();
+      setMessage(
+        status === "Approved"
+          ? "Leave cancelled and its hours returned."
+          : "Cancellation rejected; the leave stays approved.",
+      );
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error ? error.message : "Could not save decision.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
   async function loadEmployees() {
-    const [people, lists] = await Promise.all(
-      ["/api/employees", "/api/organisation"].map((url) =>
+    const [people, lists, carry] = await Promise.all(
+      ["/api/employees", "/api/organisation", "/api/carry-forward"].map((url) =>
         fetch(url, { cache: "no-store" }),
       ),
     );
@@ -480,8 +697,73 @@ export default function Home() {
     if (!people.ok) throw new Error(data.error);
     const listData = await lists.json();
     if (!lists.ok) throw new Error(listData.error);
+    const carryData = await carry.json();
+    if (!carry.ok) throw new Error(carryData.error);
     setEmployees(data.employees);
     setOrganisation(listData);
+    setCarryForward(carryData);
+  }
+  async function saveCarryForward(
+    row: CarryForwardRow,
+    action: "exception" | "confirm",
+  ) {
+    if (busy || !carryForward) return;
+    const body: Record<string, unknown> = {
+      action,
+      employee_id: row.employee_id,
+      source_year: carryForward.sourceYear,
+    };
+    if (action === "exception") {
+      const limitDays = Number(
+        window.prompt(
+          `Written approval for ${row.name}: the higher carry-forward limit in days (more than 5, in half days).`,
+        ),
+      );
+      if (!limitDays) return;
+      body.limit_hours = limitDays * 8;
+      body.document_reference = window.prompt(
+        "Reference of the written approval document:",
+      );
+      if (!body.document_reference) return;
+    } else {
+      const answer = window.prompt(
+        `Carry forward how many days for ${row.name}? Calculated: ${days(row.draft.carry)} days. You may only reduce it.`,
+        String(days(row.draft.carry)),
+      );
+      if (answer === null) return;
+      body.carry_hours = Math.round(Number(answer) * 8);
+      if (body.carry_hours !== row.draft.carry) {
+        body.reason = window.prompt("Reason for reducing the carry-forward:");
+        body.document_reference = window.prompt(
+          "Reference of the supporting document:",
+        );
+        if (!body.reason || !body.document_reference) return;
+      }
+    }
+    setBusy(true);
+    try {
+      const response = await fetch("/api/carry-forward", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      await loadEmployees();
+      setMessage(
+        action === "exception"
+          ? "Written carry-forward exception recorded."
+          : "Carry-forward confirmed.",
+      );
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error
+          ? error.message
+          : "Could not save carry-forward.",
+      );
+    } finally {
+      setBusy(false);
+    }
   }
   async function saveOrganisation(
     type: "department" | "costCentre",
@@ -566,7 +848,8 @@ export default function Home() {
     setError("");
     setStartDate("");
     setEndDate("");
-    setLeaveHours({});
+    setUniformHours("8");
+    setTrainingCategory("");
     setLeaveCategory("Annual leave");
     setModal(kind);
   }
@@ -786,6 +1069,12 @@ export default function Home() {
                             {annual.rateDays} days a year, earned monthly
                           </span>
                         </div>
+                        {carried && carried.remaining > 0 && (
+                          <p className="stat-subtext">
+                            Plus {days(carried.remaining)} carried-forward days
+                            to use by {dateLabel(carried.useBy)}.
+                          </p>
+                        )}
                       </>
                     )}
                   </div>
@@ -1090,15 +1379,17 @@ export default function Home() {
                   </p>
                 </div>
                 <div className="filters" aria-label="Filter by status">
-                  {["All", "Pending", "Approved", "Rejected"].map((status) => (
-                    <button
-                      key={status}
-                      className={filter === status ? "selected" : ""}
-                      onClick={() => setFilter(status)}
-                    >
-                      {status}
-                    </button>
-                  ))}
+                  {["All", "Pending", "Approved", "Rejected", "Cancelled"].map(
+                    (status) => (
+                      <button
+                        key={status}
+                        className={filter === status ? "selected" : ""}
+                        onClick={() => setFilter(status)}
+                      >
+                        {status}
+                      </button>
+                    ),
+                  )}
                 </div>
               </div>
               <div className="table-scroll">
@@ -1149,6 +1440,67 @@ export default function Home() {
                         <td>
                           <span>{request.detail}</span>
                           <small className="request-note">{request.note}</small>
+                          {requestFacts(request) && (
+                            <small className="request-note">
+                              {requestFacts(request)}
+                            </small>
+                          )}
+                          {request.attachments?.map((file) => (
+                            <a
+                              key={file.id}
+                              className="request-document"
+                              href={`/api/attachments/${file.id}`}
+                            >
+                              {file.file_name}
+                            </a>
+                          ))}
+                          {request.kind === "Leave" &&
+                            request.status === "Pending" &&
+                            request.employee_id === employee.id && (
+                              <label className="request-document">
+                                Attach document
+                                <input
+                                  type="file"
+                                  className="sr-only"
+                                  accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                                  disabled={busy}
+                                  onChange={(e) => {
+                                    void attachDocument(
+                                      request.id,
+                                      e.currentTarget.files?.[0],
+                                    );
+                                    e.currentTarget.value = "";
+                                  }}
+                                />
+                              </label>
+                            )}
+                          {pendingCancellation(request) && (
+                            <small className="request-note">
+                              {pendingCancellation(request)!.kind ===
+                              "Correction"
+                                ? "HR correction pending"
+                                : "Cancellation requested"}
+                              : {pendingCancellation(request)!.reason}
+                            </small>
+                          )}
+                          {request.kind === "Leave" &&
+                            request.status === "Approved" &&
+                            !pendingCancellation(request) &&
+                            (request.employee_id === employee.id
+                              ? !started(request)
+                              : view === "HR approvals" &&
+                                request.category === "Emergency leave" &&
+                                started(request)) && (
+                              <button
+                                className="request-action"
+                                disabled={busy}
+                                onClick={() => requestCancellation(request)}
+                              >
+                                {request.employee_id === employee.id
+                                  ? "Request cancellation"
+                                  : "Correct (cancel) this leave"}
+                              </button>
+                            )}
                         </td>
                         <td className="amount">
                           {request.kind === "Leave"
@@ -1165,11 +1517,37 @@ export default function Home() {
                         </td>
                         {view === "HR approvals" && (
                           <td>
-                            {request.status === "Pending" &&
+                            {(request.status === "Pending" ||
+                              pendingCancellation(request)) &&
                             request.employee_id === employee.id ? (
                               <span className="reviewed">
                                 Another reviewer decides
                               </span>
+                            ) : pendingCancellation(request) ? (
+                              <div className="decision-buttons">
+                                <button
+                                  disabled={busy}
+                                  onClick={() =>
+                                    decideCancellation(
+                                      pendingCancellation(request)!.id,
+                                      "Approved",
+                                    )
+                                  }
+                                >
+                                  Cancel leave
+                                </button>
+                                <button
+                                  disabled={busy}
+                                  onClick={() =>
+                                    decideCancellation(
+                                      pendingCancellation(request)!.id,
+                                      "Rejected",
+                                    )
+                                  }
+                                >
+                                  Keep leave
+                                </button>
+                              </div>
                             ) : request.status === "Pending" ? (
                               <div className="decision-buttons">
                                 <button
@@ -1273,6 +1651,81 @@ export default function Home() {
                           >
                             Edit
                           </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+          {view === "Employees" && canManageEmployees && carryForward && (
+            <section className="requests-card">
+              <div className="requests-heading">
+                <div>
+                  <h2>
+                    Annual Leave carry-forward from {carryForward.sourceYear}
+                  </h2>
+                  <p>
+                    {carryForward.provisional
+                      ? "A running estimate. Record written approvals for a higher limit from 1 October to 15 December; confirm from 1 January to 31 March."
+                      : "Confirm each employee's carry-forward by 31 March. Carried days are spent first on leave dated up to 31 March; the rest of the unused leave is recorded, not added."}
+                  </p>
+                </div>
+              </div>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Employee</th>
+                      <th>Unused</th>
+                      <th>Limit</th>
+                      <th>Carry forward</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {carryForward.rows.map((row) => (
+                      <tr key={row.employee_id}>
+                        <td>{row.name}</td>
+                        <td>{days(row.draft.unusedHours)} days</td>
+                        <td>
+                          {days(row.draft.limit)} days
+                          {row.exception && (
+                            <small className="request-note">
+                              Written approval:{" "}
+                              {row.exception.document_reference}
+                            </small>
+                          )}
+                        </td>
+                        <td>
+                          {days(row.confirmed?.carry_hours ?? row.draft.carry)}{" "}
+                          days
+                        </td>
+                        <td>{row.confirmed ? "Confirmed" : "Not confirmed"}</td>
+                        <td>
+                          {carryForward.canConfirm && !row.confirmed && (
+                            <button
+                              className="request-action"
+                              disabled={busy}
+                              onClick={() => saveCarryForward(row, "confirm")}
+                            >
+                              Confirm
+                            </button>
+                          )}
+                          {carryForward.canRecordException &&
+                            !row.exception && (
+                              <button
+                                className="request-action"
+                                disabled={busy}
+                                onClick={() =>
+                                  saveCarryForward(row, "exception")
+                                }
+                              >
+                                Record written approval
+                              </button>
+                            )}
                         </td>
                       </tr>
                     ))}
@@ -1581,19 +2034,11 @@ export default function Home() {
                   name="category"
                   value={modal === "Leave" ? leaveCategory : undefined}
                   onChange={(e) => {
-                    if (modal === "Leave") {
-                      setLeaveCategory(e.target.value);
-                      setLeaveHours({});
-                    }
+                    if (modal === "Leave") setLeaveCategory(e.target.value);
                   }}
                 >
                   {(modal === "Leave"
-                    ? [
-                        "Annual leave",
-                        "Medical leave",
-                        "Hospitalisation leave",
-                        "Unpaid leave",
-                      ]
+                    ? leaveCategories
                     : ["Travel", "Meals", "Office supplies", "Other"]
                   ).map((category) => (
                     <option key={category}>{category}</option>
@@ -1610,10 +2055,7 @@ export default function Home() {
                         name="start"
                         type="date"
                         value={startDate}
-                        onInput={(e) => {
-                          setStartDate(e.currentTarget.value);
-                          setLeaveHours({});
-                        }}
+                        onInput={(e) => setStartDate(e.currentTarget.value)}
                         required
                       />
                     </label>
@@ -1623,61 +2065,106 @@ export default function Home() {
                         name="end"
                         type="date"
                         min={startDate}
-                        value={endDate}
-                        onInput={(e) => {
-                          setEndDate(e.currentTarget.value);
-                          setLeaveHours({});
-                        }}
+                        value={leaveEnd}
+                        readOnly={Boolean(fixedDays)}
+                        onInput={(e) => setEndDate(e.currentTarget.value)}
                         required
                       />
                     </label>
                   </div>
-                  <p className="field-help">
-                    {isMedical
-                      ? "Medical leave follows certificate dates in full days. HR must verify certification and eligibility."
-                      : "Weekends excluded · Choose any positive number of hours, up to 8 per working day. 8 hours = 1 day. Company public holidays are not configured yet."}
-                  </p>
-                  {leaveDates.length > 0 && (
-                    <div className="leave-hours-list">
-                      {leaveDates.map((date) => (
-                        <label key={date}>
-                          {dateLabel(date)}
-                          <input
-                            aria-label={`Leave hours ${date}`}
-                            type="number"
-                            min="0"
-                            max="8"
-                            step="any"
-                            required
-                            readOnly={isMedical}
-                            value={isMedical ? "8" : (leaveHours[date] ?? "8")}
-                            onChange={(e) =>
-                              setLeaveHours((previous) => ({
-                                ...previous,
-                                [date]: e.target.value,
-                              }))
-                            }
-                          />
+                  <p className="field-help">{leaveHelp[leaveCategory]}</p>
+                  {leaveCategory === "Training leave" && (
+                    <label>
+                      Training category
+                      <select
+                        name="training_category"
+                        value={trainingCategory}
+                        onChange={(e) => setTrainingCategory(e.target.value)}
+                        required
+                      >
+                        <option value="">Choose a category</option>
+                        {trainingCategories.map((option) => (
+                          <option key={option}>{option}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {leaveCategory === "Marriage leave" && (
+                    <>
+                      <label>
+                        Official marriage registration date
+                        <input name="registered_on" type="date" required />
+                      </label>
+                      <label className="checkbox-field">
+                        <input name="first_marriage" type="checkbox" required />
+                        I declare this is my first legal marriage.
+                      </label>
+                    </>
+                  )}
+                  {leaveCategory === "Compassionate leave" && (
+                    <label>
+                      Relationship
+                      <select name="relationship" defaultValue="" required>
+                        <option value="">Choose a relationship</option>
+                        {compassionateRelationships.map((option) => (
+                          <option key={option}>{option}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {["Maternity leave", "Paternity leave"].includes(
+                    leaveCategory,
+                  ) && (
+                    <div className="form-row">
+                      <label>
+                        {leaveCategory === "Maternity leave"
+                          ? "Expected confinement date"
+                          : "Expected birth date"}
+                        <input
+                          name="expected_birth_on"
+                          type="date"
+                          required={leaveCategory === "Maternity leave"}
+                        />
+                      </label>
+                      {leaveCategory === "Paternity leave" && (
+                        <label>
+                          Actual birth date
+                          <input name="birth_on" type="date" />
                         </label>
-                      ))}
-                      <p>
-                        Total:{" "}
-                        {leaveDates.reduce(
-                          (sum, date) =>
-                            sum +
-                            (isMedical ? 8 : Number(leaveHours[date] ?? 8)),
-                          0,
-                        )}{" "}
-                        hours (
-                        {leaveDates.reduce(
-                          (sum, date) =>
-                            sum +
-                            (isMedical ? 8 : Number(leaveHours[date] ?? 8)),
-                          0,
-                        ) / 8}{" "}
-                        days)
-                      </p>
+                      )}
+                      <label>
+                        {leaveCategory === "Maternity leave"
+                          ? "Formal notice given on"
+                          : "Notice given on"}
+                        <input name="notified_on" type="date" required />
+                      </label>
                     </div>
+                  )}
+                  {!fixedDays && (
+                    <label>
+                      Duration for every date
+                      <select
+                        value={uniformHours}
+                        onChange={(e) => setUniformHours(e.target.value)}
+                      >
+                        <option value="8">Full day (8 hours)</option>
+                        <option value="4">Half day (4 hours)</option>
+                      </select>
+                    </label>
+                  )}
+                  {fixedDays && leaveDates.length > 0 && (
+                    <p className="field-help">
+                      {leaveDates.length} calendar days, {dateLabel(startDate)}{" "}
+                      – {dateLabel(leaveEnd)}.
+                    </p>
+                  )}
+                  {!fixedDays && leaveDates.length > 0 && (
+                    <p className="field-help">
+                      {leaveDates.length} weekday
+                      {leaveDates.length === 1 ? "" : "s"} × {leaveHoursPerDate}{" "}
+                      hours = {leaveDates.length * leaveHoursPerDate} hours (
+                      {days(leaveDates.length * leaveHoursPerDate)} days).
+                    </p>
                   )}
                 </>
               ) : (
@@ -1709,6 +2196,16 @@ export default function Home() {
                     connected.
                   </p>
                 </>
+              )}
+              {modal === "Leave" && (
+                <label>
+                  Supporting document (PDF, PNG or JPEG, up to 10 MB)
+                  <input
+                    name="document"
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                  />
+                </label>
               )}
               <label>
                 {modal === "Leave" ? "Reason" : "Additional details"}

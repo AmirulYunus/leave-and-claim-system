@@ -23,6 +23,18 @@ export async function signIn(email, password = process.env.SEED_PASSWORD) {
     .join("; ");
 }
 
+// Check scripts remove the emails they cause: note the last outbox id before
+// the run, then delete newer rows. Local development databases only.
+export async function outboxMark(client) {
+  const { rows } = await client.query(
+    "SELECT coalesce(max(id), 0) AS id FROM notifications",
+  );
+  return Number(rows[0].id);
+}
+export function clearOutboxSince(client, id) {
+  return client.query("DELETE FROM notifications WHERE id > $1", [id]);
+}
+
 export async function demoSessions() {
   const entries = await Promise.all(
     Object.entries(demoEmails).map(async ([role, email]) => [

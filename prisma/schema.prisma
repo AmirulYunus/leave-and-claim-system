@@ -52,6 +52,8 @@ model employees {
   must_change_password   Boolean             @default(true)
   sessions               sessions[]
   attachments            attachments[]
+  requestedCancellations cancellations[]     @relation("cancellations_requested_byToemployees")
+  reviewedCancellations  cancellations[]     @relation("cancellations_reviewed_byToemployees")
   department             departments?        @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   cost_centre            cost_centres?       @relation(fields: [cost_centre_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   submittedRequests      requests[]          @relation("requests_employee_idToemployees")
@@ -74,6 +76,25 @@ model attachments {
   uploader     employees @relation(fields: [uploaded_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([request_id], map: "attachments_request")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model cancellations {
+  id           Int        @id @default(autoincrement())
+  request_id   Int
+  /// Cancellation (employee, future leave) or Correction (HR, started Emergency leave).
+  kind         String
+  reason       String
+  status       String     @default("Pending")
+  requested_by Int
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  reviewed_by  Int?
+  reviewed_at  DateTime?  @db.Timestamptz(6)
+  request      requests   @relation(fields: [request_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  requester    employees  @relation("cancellations_requested_byToemployees", fields: [requested_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reviewer     employees? @relation("cancellations_reviewed_byToemployees", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([request_id], map: "cancellations_request")
 }
 
 model sessions {
@@ -127,6 +148,7 @@ model requests {
   attachments       attachments[]
   employee          employees       @relation("requests_employee_idToemployees", fields: [employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   reviewer          employees?      @relation("requests_reviewed_byToemployees", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  cancellations     cancellations[]
 
   @@index([employee_id, status], map: "requests_employee_status")
 }

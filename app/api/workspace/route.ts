@@ -91,7 +91,7 @@ async function getLeaveRecords(
     where: {
       requests: {
         employee_id: employeeId,
-        status: { not: "Rejected" },
+        status: { notIn: ["Rejected", "Cancelled"] },
         ...(excludeId ? { id: { not: excludeId } } : {}),
       },
     },
@@ -295,6 +295,10 @@ export async function GET(request: Request) {
               select: { id: true, file_name: true, size_bytes: true },
               orderBy: { id: "asc" },
             },
+            cancellations: {
+              select: { id: true, kind: true, status: true, reason: true },
+              orderBy: { id: "asc" },
+            },
           },
           orderBy: [{ created_at: "desc" }, { id: "desc" }],
         });
@@ -334,6 +338,7 @@ export async function GET(request: Request) {
             })),
             details: storedDetails(item),
             attachments: item.attachments,
+            cancellations: item.cancellations,
           })),
         };
       },
@@ -519,10 +524,11 @@ export async function PATCH(request: Request) {
           target.category === "Paternity leave"
             ? (
                 await tx.requests.findMany({
+                  // A cancellation does not undo a birth.
                   where: {
                     employee_id: target.employee_id,
                     category: "Paternity leave",
-                    status: "Approved",
+                    status: { in: ["Approved", "Cancelled"] },
                     id: { not: target.id },
                   },
                   select: { birth_on: true },

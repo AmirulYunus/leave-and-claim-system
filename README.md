@@ -71,11 +71,21 @@ Every API handler requires a signed-in session and checks the employee's current
 - **Compassionate leave:** 3 consecutive calendar days for a spouse, child, natural parent, sibling, grandparent, parent-in-law or legal guardian, with a supporting document before approval.
 - Maternity, paternity, marriage and compassionate leave may cross a year end and use no balance; other types must fall in one calendar year.
 
+## Cancelling approved leave
+
+`app/lib/cancellation.ts` holds the cancellation rules carried over from the Dataverse solution.
+
+- Only the employee can ask to cancel their approved leave, with a reason, and only while every date is still in the future. Cancelling leave that has started or been taken is on hold.
+- The leave stays approved, and keeps using its balance, while the cancellation is pending; only one can be pending at a time.
+- HR, but not the employee themselves, approves or rejects the cancellation. Approval marks the leave Cancelled, which returns exactly the hours it used; rejection keeps the leave approved.
+- HR can correct approved Emergency leave that has already started, with a reason; the correction is decided the same way.
+- A cancelled paternity approval still counts towards the paternity birth limit, because a cancellation does not undo a birth; cancelled marriage leave can be booked again.
+
 ## Supporting documents
 
 Employees attach PDF, PNG or JPEG files up to 10 MB to their own pending leave requests, either in the request form or from the request list. The file's content must match its extension. The owner and HR or Admin can download documents; anyone else gets "not found". Files are stored under random names in `.storage/uploads` (set `UPLOAD_DIR` to change it); S3 storage for staging and production is still to be added behind `app/lib/storage.ts`.
 
-Carry-forward, public holidays and cancellation are pending. See LEAVE_POLICY.md for confirmed policy and unresolved decisions.
+Carry-forward and public holidays are pending. See LEAVE_POLICY.md for confirmed policy and unresolved decisions.
 
 Database credentials stay on the server; DATABASE_URL must never use a NEXT_PUBLIC_ prefix. The Docker volume preserves records across container stops; removing its volume deletes them.
 
@@ -87,7 +97,7 @@ npx tsc --noEmit
 npm test
 ```
 
-With the dev server and local database running, `node scripts/check-persistence.mjs` checks a temporary 2.5-hour leave request, HR approval, persisted worked hours, and conflict rejection. It removes only its temporary records afterward. Its reserved test date (29 December 2026) must be unused. `node scripts/check-roles.mjs` verifies sign-in, employee creation, editing, role restrictions, and request isolation, then removes its temporary profiles. `node scripts/check-entitlements.mjs` verifies the entitlement summary and that missing HR details block entitled leave. `node scripts/check-leave-types.mjs` verifies the maternity, paternity, training and emergency rules and document access. The scripts sign in with `SEED_PASSWORD`.
+With the dev server and local database running, `node scripts/check-persistence.mjs` checks a temporary 2.5-hour leave request, HR approval, persisted worked hours, and conflict rejection. It removes only its temporary records afterward. Its reserved test date (29 December 2026) must be unused. `node scripts/check-roles.mjs` verifies sign-in, employee creation, editing, role restrictions, and request isolation, then removes its temporary profiles. `node scripts/check-entitlements.mjs` verifies the entitlement summary and that missing HR details block entitled leave. `node scripts/check-leave-types.mjs` verifies the leave-type rules and document access, and `node scripts/check-cancellations.mjs` verifies cancellation and HR correction. The scripts sign in with `SEED_PASSWORD`.
 
 ## Prisma schema changes
 

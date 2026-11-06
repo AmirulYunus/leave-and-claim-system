@@ -713,6 +713,21 @@ td {
   background: #fbebea;
   color: #ba736d;
 }
+.status.cancelled {
+  background: #eef0f2;
+  color: #7c858d;
+}
+.request-action {
+  display: block;
+  margin-top: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 10px;
+  color: #3e7a58;
+  text-decoration: underline;
+  cursor: pointer;
+}
 .table-footer {
   display: flex;
   justify-content: space-between;

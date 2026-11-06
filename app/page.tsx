@@ -67,12 +67,20 @@ type Request = {
   category: string;
   detail: string;
   value: number;
-  status: "Pending" | "Approved" | "Rejected";
+  status: "Pending" | "Approved" | "Rejected" | "Cancelled";
   note: string;
   entries?: LeaveEntry[];
   details?: LeaveDetails;
   attachments?: { id: number; file_name: string; size_bytes: number }[];
+  cancellations?: {
+    id: number;
+    kind: "Cancellation" | "Correction";
+    status: "Pending" | "Approved" | "Rejected";
+    reason: string;
+  }[];
 };
+const pendingCancellation = (request: Request) =>
+  request.cancellations?.find((item) => item.status === "Pending");
 // Category details shown under a request, e.g. birth and notice dates.
 function requestFacts(request: Request) {
   const details = request.details;
@@ -269,7 +277,13 @@ export default function Home() {
   const mine = requests.filter(
     (request) => request.employee_id === employee.id,
   );
-  const pending = requests.filter((request) => request.status === "Pending");
+  const pending = requests.filter(
+    (request) =>
+      request.status === "Pending" || Boolean(pendingCancellation(request)),
+  );
+  const today = entitlements?.asOf ?? "";
+  const started = (request: Request) =>
+    (request.entries ?? []).some((entry) => entry.date <= today);
   // Hours charged to a balance this year by requests with the given statuses.
   // Emergency and external training leave are charged to Annual Leave.
   const usedHours = (balance: string, statuses: Request["status"][]) =>
@@ -566,6 +580,60 @@ export default function Home() {
       await persist("PATCH", { id, status, birth_on });
       await refresh();
       setMessage(`Request ${status.toLowerCase()} and saved.`);
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error ? error.message : "Could not save decision.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function sendCancellation(method: "POST" | "PATCH", body: object) {
+    const response = await fetch("/api/cancellations", {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+  }
+  async function requestCancellation(target: Request) {
+    if (busy) return;
+    const reason = window.prompt(
+      target.employee_id === employee.id
+        ? "Why do you want to cancel this leave? HR will review the cancellation; the leave stays approved until then."
+        : "Why does this Emergency leave need correcting? The leave will be cancelled and its Annual Leave hours restored once the correction is approved.",
+    );
+    if (!reason?.trim()) return;
+    setBusy(true);
+    try {
+      await sendCancellation("POST", { request_id: target.id, reason });
+      await refresh();
+      setMessage("Cancellation sent to HR for review.");
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error
+          ? error.message
+          : "Could not request cancellation.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function decideCancellation(
+    id: number,
+    status: "Approved" | "Rejected",
+  ) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await sendCancellation("PATCH", { id, status });
+      await refresh();
+      setMessage(
+        status === "Approved"
+          ? "Leave cancelled and its hours returned."
+          : "Cancellation rejected; the leave stays approved.",
+      );
     } catch (error) {
       setConnectionError(
         error instanceof Error ? error.message : "Could not save decision.",
@@ -1195,15 +1263,17 @@ export default function Home() {
                   </p>
                 </div>
                 <div className="filters" aria-label="Filter by status">
-                  {["All", "Pending", "Approved", "Rejected"].map((status) => (
-                    <button
-                      key={status}
-                      className={filter === status ? "selected" : ""}
-                      onClick={() => setFilter(status)}
-                    >
-                      {status}
-                    </button>
-                  ))}
+                  {["All", "Pending", "Approved", "Rejected", "Cancelled"].map(
+                    (status) => (
+                      <button
+                        key={status}
+                        className={filter === status ? "selected" : ""}
+                        onClick={() => setFilter(status)}
+                      >
+                        {status}
+                      </button>
+                    ),
+                  )}
                 </div>
               </div>
               <div className="table-scroll">
@@ -1288,6 +1358,33 @@ export default function Home() {
                                 />
                               </label>
                             )}
+                          {pendingCancellation(request) && (
+                            <small className="request-note">
+                              {pendingCancellation(request)!.kind ===
+                              "Correction"
+                                ? "HR correction pending"
+                                : "Cancellation requested"}
+                              : {pendingCancellation(request)!.reason}
+                            </small>
+                          )}
+                          {request.kind === "Leave" &&
+                            request.status === "Approved" &&
+                            !pendingCancellation(request) &&
+                            (request.employee_id === employee.id
+                              ? !started(request)
+                              : view === "HR approvals" &&
+                                request.category === "Emergency leave" &&
+                                started(request)) && (
+                              <button
+                                className="request-action"
+                                disabled={busy}
+                                onClick={() => requestCancellation(request)}
+                              >
+                                {request.employee_id === employee.id
+                                  ? "Request cancellation"
+                                  : "Correct (cancel) this leave"}
+                              </button>
+                            )}
                         </td>
                         <td className="amount">
                           {request.kind === "Leave"
@@ -1304,11 +1401,37 @@ export default function Home() {
                         </td>
                         {view === "HR approvals" && (
                           <td>
-                            {request.status === "Pending" &&
+                            {(request.status === "Pending" ||
+                              pendingCancellation(request)) &&
                             request.employee_id === employee.id ? (
                               <span className="reviewed">
                                 Another reviewer decides
                               </span>
+                            ) : pendingCancellation(request) ? (
+                              <div className="decision-buttons">
+                                <button
+                                  disabled={busy}
+                                  onClick={() =>
+                                    decideCancellation(
+                                      pendingCancellation(request)!.id,
+                                      "Approved",
+                                    )
+                                  }
+                                >
+                                  Cancel leave
+                                </button>
+                                <button
+                                  disabled={busy}
+                                  onClick={() =>
+                                    decideCancellation(
+                                      pendingCancellation(request)!.id,
+                                      "Rejected",
+                                    )
+                                  }
+                                >
+                                  Keep leave
+                                </button>
+                              </div>
                             ) : request.status === "Pending" ? (
                               <div className="decision-buttons">
                                 <button

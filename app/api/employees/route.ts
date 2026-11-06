@@ -2,11 +2,84 @@ import { hasPermission } from "../../lib/permissions";
 import { database } from "../../lib/prisma";
 import { checkDevelopmentAccess, demoEmail } from "../../lib/demo-access";
 import { datesBetween } from "../../lib/time";
+import {
+  newEmploymentDetails,
+  parseEmploymentDetails,
+  type EmploymentDetails,
+} from "../../lib/employment";
 import { Prisma } from "../../generated/prisma/client";
 
 export const runtime = "nodejs";
 
 class ValidationError extends Error {}
+
+const isoDate = (date: Date | null) =>
+  date ? date.toISOString().slice(0, 10) : null;
+const dbDate = (date: string | null) =>
+  date ? new Date(`${date}T00:00:00Z`) : null;
+
+function storedDetails(employee: {
+  position: string | null;
+  employment_type: string | null;
+  employee_level: number | null;
+  probation_completed_on: Date | null;
+  leaving_date: Date | null;
+  is_active: boolean;
+  department_id: number | null;
+  cost_centre_id: number | null;
+}): EmploymentDetails {
+  return {
+    position: employee.position,
+    employment_type: employee.employment_type,
+    employee_level: employee.employee_level,
+    probation_completed_on: isoDate(employee.probation_completed_on),
+    leaving_date: isoDate(employee.leaving_date),
+    is_active: employee.is_active,
+    department_id: employee.department_id,
+    cost_centre_id: employee.cost_centre_id,
+  };
+}
+
+function employmentData(details: EmploymentDetails) {
+  return {
+    ...details,
+    probation_completed_on: dbDate(details.probation_completed_on),
+    leaving_date: dbDate(details.leaving_date),
+  };
+}
+
+function employmentDetails(
+  input: Record<string, unknown>,
+  joinDate: string,
+  current: EmploymentDetails,
+) {
+  const details = parseEmploymentDetails(input, joinDate, current);
+  if (typeof details === "string") throw new ValidationError(details);
+  return details;
+}
+
+// Newly chosen classifications must be active; an unchanged one may since have
+// been deactivated and is kept.
+async function checkClassification(
+  tx: Prisma.TransactionClient,
+  next: EmploymentDetails,
+  current: EmploymentDetails,
+) {
+  if (next.department_id && next.department_id !== current.department_id) {
+    const entry = await tx.departments.findUnique({
+      where: { id: next.department_id },
+    });
+    if (!entry?.is_active)
+      throw new ValidationError("Choose an active department.");
+  }
+  if (next.cost_centre_id && next.cost_centre_id !== current.cost_centre_id) {
+    const entry = await tx.cost_centres.findUnique({
+      where: { id: next.cost_centre_id },
+    });
+    if (!entry?.is_active)
+      throw new ValidationError("Choose an active cost centre.");
+  }
+}
 
 function failure(error: unknown) {
   if (error instanceof ValidationError)
@@ -57,7 +130,8 @@ export async function GET(request: Request) {
       {
         employees: employees.map((employee) => ({
           ...employee,
-          join_date: employee.join_date.toISOString().slice(0, 10),
+          ...storedDetails(employee),
+          join_date: isoDate(employee.join_date),
         })),
       },
       { headers: { "Cache-Control": "no-store" } },
@@ -91,6 +165,11 @@ export async function POST(request: Request) {
       throw new ValidationError("Enter a valid join date.");
     if (!["Employee", "HR", "Admin"].includes(role))
       throw new ValidationError("Invalid role.");
+    const details = employmentDetails(
+      input,
+      input.join_date,
+      newEmploymentDetails,
+    );
     const denied = await database().$transaction(async (tx) => {
       const actor = await tx.employees.findUnique({
         where: { email: demoEmail(request) },
@@ -117,12 +196,14 @@ export async function POST(request: Request) {
             { error: "Forbidden", message: "Forbidden" },
             { status: 403 },
           );
+      await checkClassification(tx, details, newEmploymentDetails);
       await tx.employees.create({
         data: {
           name,
           email,
           role,
           join_date: new Date(`${input.join_date}T00:00:00Z`),
+          ...employmentData(details),
         },
       });
     });
@@ -152,7 +233,7 @@ export async function PATCH(request: Request) {
     if (!["Employee", "HR", "Admin"].includes(input.role))
       throw new ValidationError("Invalid role.");
     const denied = await database().$transaction(async (tx) => {
-      // Serialize role edits so two changes cannot remove the last Admin.
+      // Serialize edits so two changes cannot remove the last active Admin.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(-1::integer)`;
       const actor = await tx.employees.findUnique({
         where: { email: demoEmail(request) },
@@ -181,18 +262,25 @@ export async function PATCH(request: Request) {
             { error: "Forbidden", message: "Forbidden" },
             { status: 403 },
           );
+      const current = storedDetails(target);
+      const details = employmentDetails(input, input.join_date, current);
       if (
         target.role === "Admin" &&
-        input.role !== "Admin" &&
-        (await tx.employees.count({ where: { role: "Admin" } })) <= 1
+        target.is_active &&
+        (input.role !== "Admin" || !details.is_active) &&
+        (await tx.employees.count({
+          where: { role: "Admin", is_active: true },
+        })) <= 1
       )
-        throw new ValidationError("Keep at least one Admin account.");
+        throw new ValidationError("Keep at least one active Admin account.");
+      await checkClassification(tx, details, current);
       await tx.employees.update({
         where: { id: input.id },
         data: {
           name,
           join_date: new Date(`${input.join_date}T00:00:00Z`),
           role: input.role,
+          ...employmentData(details),
         },
       });
     });

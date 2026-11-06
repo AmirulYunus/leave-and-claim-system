@@ -10,13 +10,23 @@ import {
   validateLeave,
   type LeaveEntry,
 } from "./lib/time";
+import {
+  employeeLevels,
+  employmentTypes,
+  type EmploymentDetails,
+} from "./lib/employment";
 
-type Employee = {
+type Employee = EmploymentDetails & {
   id: number;
   name: string;
   email: string;
   join_date: string;
   role: string;
+};
+type OrganisationEntry = { id: number; name: string; is_active: boolean };
+type Organisation = {
+  departments: OrganisationEntry[];
+  costCentres: OrganisationEntry[];
 };
 
 type Request = {
@@ -66,6 +76,73 @@ function Icon({ name }: { name: string }) {
   );
 }
 
+function OrganisationList({
+  title,
+  noun,
+  entries,
+  disabled,
+  onSave,
+}: {
+  title: string;
+  noun: string;
+  entries: OrganisationEntry[];
+  disabled: boolean;
+  onSave: (body: {
+    id?: number;
+    name: string;
+    is_active?: boolean;
+  }) => Promise<boolean>;
+}) {
+  return (
+    <div className="organisation-list">
+      <h3>{title}</h3>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const form = event.currentTarget;
+          const name = String(new FormData(form).get("name") ?? "").trim();
+          if (name && (await onSave({ name }))) form.reset();
+        }}
+      >
+        <input
+          name="name"
+          maxLength={100}
+          placeholder={`New ${noun}`}
+          aria-label={`New ${noun}`}
+          required
+        />
+        <button className="button secondary" disabled={disabled}>
+          Add
+        </button>
+      </form>
+      <ul>
+        {entries.map((entry) => (
+          <li key={entry.id}>
+            <span>
+              {entry.name}
+              {entry.is_active ? "" : " (inactive)"}
+            </span>
+            <button
+              className="button secondary"
+              disabled={disabled}
+              onClick={() =>
+                onSave({
+                  id: entry.id,
+                  name: entry.name,
+                  is_active: !entry.is_active,
+                })
+              }
+            >
+              {entry.is_active ? "Deactivate" : "Activate"}
+            </button>
+          </li>
+        ))}
+        {!entries.length && <li>None yet.</li>}
+      </ul>
+    </div>
+  );
+}
+
 export default function Home() {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -80,6 +157,10 @@ export default function Home() {
   const [view, setView] = useState("Dashboard");
   const [role, setRole] = useState("Employee");
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [organisation, setOrganisation] = useState<Organisation>({
+    departments: [],
+    costCentres: [],
+  });
   const [employeeEditor, setEmployeeEditor] =
     useState<Partial<Employee> | null>(null);
   const canManageEmployees = loaded && ["HR", "Admin"].includes(employee.role);
@@ -342,13 +423,44 @@ export default function Home() {
     }
   }
   async function loadEmployees() {
-    const response = await fetch("/api/employees", {
-      cache: "no-store",
-      headers: { "x-demo-role": role },
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
+    const [people, lists] = await Promise.all(
+      ["/api/employees", "/api/organisation"].map((url) =>
+        fetch(url, { cache: "no-store", headers: { "x-demo-role": role } }),
+      ),
+    );
+    const data = await people.json();
+    if (!people.ok) throw new Error(data.error);
+    const listData = await lists.json();
+    if (!lists.ok) throw new Error(listData.error);
     setEmployees(data.employees);
+    setOrganisation(listData);
+  }
+  async function saveOrganisation(
+    type: "department" | "costCentre",
+    body: { id?: number; name: string; is_active?: boolean },
+  ) {
+    if (busy || !loaded) return false;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/organisation", {
+        method: body.id ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json", "x-demo-role": role },
+        body: JSON.stringify({ type, ...body }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      await loadEmployees();
+      setMessage("Organisation list saved.");
+      return true;
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error ? error.message : "Could not save the list.",
+      );
+      return false;
+    } finally {
+      setBusy(false);
+    }
   }
   async function saveEmployee(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -366,6 +478,16 @@ export default function Home() {
           email: form.get("email"),
           join_date: form.get("join_date"),
           role: form.get("role") ?? "Employee",
+          position: form.get("position"),
+          employment_type: form.get("employment_type"),
+          employee_level: form.get("employee_level"),
+          probation_completed_on: form.get("probation_completed_on"),
+          leaving_date: form.get("leaving_date"),
+          department_id: form.get("department_id"),
+          cost_centre_id: form.get("cost_centre_id"),
+          ...(employeeEditor?.id
+            ? { is_active: form.get("is_active") === "on" }
+            : {}),
         }),
       });
       const data = await response.json();
@@ -1029,6 +1151,9 @@ export default function Home() {
                       <th>Email</th>
                       <th>Join date</th>
                       <th>Role</th>
+                      <th>Employment</th>
+                      <th>Department</th>
+                      <th>Status</th>
                       <th>Action</th>
                     </tr>
                   </thead>
@@ -1039,6 +1164,21 @@ export default function Home() {
                         <td>{person.email}</td>
                         <td>{dateLabel(person.join_date)}</td>
                         <td>{person.role}</td>
+                        <td>
+                          {[
+                            person.employment_type,
+                            person.employee_level &&
+                              `Level ${person.employee_level}`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "Pending HR details"}
+                        </td>
+                        <td>
+                          {organisation.departments.find(
+                            (entry) => entry.id === person.department_id,
+                          )?.name ?? "—"}
+                        </td>
+                        <td>{person.is_active ? "Active" : "Inactive"}</td>
                         <td>
                           <button
                             className="button secondary"
@@ -1060,6 +1200,35 @@ export default function Home() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </section>
+          )}
+          {view === "Employees" && canManageEmployees && (
+            <section className="requests-card">
+              <div className="requests-heading">
+                <div>
+                  <h2>Departments and cost centres</h2>
+                  <p>
+                    HR maintains these lists. Deactivate entries instead of
+                    deleting them so existing employee records stay intact.
+                  </p>
+                </div>
+              </div>
+              <div className="organisation-lists">
+                <OrganisationList
+                  title="Departments"
+                  noun="department"
+                  entries={organisation.departments}
+                  disabled={busy || !loaded}
+                  onSave={(body) => saveOrganisation("department", body)}
+                />
+                <OrganisationList
+                  title="Cost centres"
+                  noun="cost centre"
+                  entries={organisation.costCentres}
+                  disabled={busy || !loaded}
+                  onSave={(body) => saveOrganisation("costCentre", body)}
+                />
               </div>
             </section>
           )}
@@ -1145,6 +1314,104 @@ export default function Home() {
                   </select>
                 </label>
               </div>
+              <label>
+                Position
+                <input
+                  name="position"
+                  defaultValue={employeeEditor.position ?? ""}
+                  maxLength={100}
+                />
+              </label>
+              <div className="form-row">
+                <label>
+                  Employment type
+                  <select
+                    name="employment_type"
+                    defaultValue={employeeEditor.employment_type ?? ""}
+                  >
+                    <option value="">Not set</option>
+                    {employmentTypes.map((type) => (
+                      <option key={type}>{type}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Employee level
+                  <select
+                    name="employee_level"
+                    defaultValue={employeeEditor.employee_level ?? ""}
+                  >
+                    <option value="">Not set</option>
+                    {employeeLevels.map((level) => (
+                      <option key={level.value} value={level.value}>
+                        {level.value}. {level.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="form-row">
+                <label>
+                  Probation completed on
+                  <input
+                    name="probation_completed_on"
+                    type="date"
+                    defaultValue={employeeEditor.probation_completed_on ?? ""}
+                  />
+                </label>
+                <label>
+                  Leaving date
+                  <input
+                    name="leaving_date"
+                    type="date"
+                    defaultValue={employeeEditor.leaving_date ?? ""}
+                  />
+                </label>
+              </div>
+              <div className="form-row">
+                {(
+                  [
+                    ["Department", "department_id", organisation.departments],
+                    ["Cost centre", "cost_centre_id", organisation.costCentres],
+                  ] as const
+                ).map(([label, field, entries]) => (
+                  <label key={field}>
+                    {label}
+                    <select
+                      name={field}
+                      defaultValue={employeeEditor[field] ?? ""}
+                    >
+                      <option value="">Not set</option>
+                      {entries
+                        .filter(
+                          (entry) =>
+                            entry.is_active ||
+                            entry.id === employeeEditor[field],
+                        )
+                        .map((entry) => (
+                          <option key={entry.id} value={entry.id}>
+                            {entry.name}
+                            {entry.is_active ? "" : " (inactive)"}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+              {employeeEditor.id && (
+                <label className="checkbox-field">
+                  <input
+                    name="is_active"
+                    type="checkbox"
+                    defaultChecked={employeeEditor.is_active ?? true}
+                  />
+                  Active employee
+                </label>
+              )}
+              <p className="field-help">
+                Leave entitlements stay pending until HR sets the join date,
+                employment type and employee level.
+              </p>
               {error && (
                 <p className="form-error" role="alert">
                   {error}

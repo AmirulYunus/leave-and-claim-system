@@ -15,16 +15,44 @@ model claims {
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model departments {
+  id        Int         @id @default(autoincrement())
+  name      String      @unique
+  is_active Boolean     @default(true)
+  employees employees[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model cost_centres {
+  id        Int         @id @default(autoincrement())
+  name      String      @unique
+  is_active Boolean     @default(true)
+  employees employees[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model employees {
-  id                Int                 @id @default(autoincrement())
-  name              String
-  email             String              @unique
-  join_date         DateTime            @db.Date
+  id                     Int                 @id @default(autoincrement())
+  name                   String
+  email                  String              @unique
+  join_date              DateTime            @db.Date
   /// Employee, HR, or Admin; enforced by a PostgreSQL CHECK constraint.
-  role              String
-  submittedRequests requests[]          @relation("requests_employee_idToemployees")
-  reviewedRequests  requests[]          @relation("requests_reviewed_byToemployees")
-  timesheet_entries timesheet_entries[]
+  role                   String
+  position               String?
+  /// Full-time, Part-time, or Intern; null until HR supplies it.
+  employment_type        String?
+  /// 1-4; null until HR supplies it.
+  employee_level         Int?                @db.SmallInt
+  probation_completed_on DateTime?           @db.Date
+  leaving_date           DateTime?           @db.Date
+  is_active              Boolean             @default(true)
+  department_id          Int?
+  cost_centre_id         Int?
+  department             departments?        @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  cost_centre            cost_centres?       @relation(fields: [cost_centre_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  submittedRequests      requests[]          @relation("requests_employee_idToemployees")
+  reviewedRequests       requests[]          @relation("requests_reviewed_byToemployees")
+  timesheet_entries      timesheet_entries[]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.

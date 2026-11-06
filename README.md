@@ -22,13 +22,16 @@ Open http://localhost:3000. Prisma migrations are tracked in `_prisma_migrations
 
 ## Roles and employee management
 
-Select **HR** or **Admin**, then open **Employees** to add a profile with name, email, and join date. HR creates Employee and HR profiles and edits ordinary employee records. Admin creates Admin profiles and assigns Employee, HR, or Admin roles. Existing profile emails are read-only. At least one Admin must remain.
+Select **HR** or **Admin**, then open **Employees** to add a profile with name, email, and join date. HR creates Employee and HR profiles and edits ordinary employee records. Admin creates Admin profiles and assigns Employee, HR, or Admin roles. Existing profile emails are read-only. At least one active Admin must remain.
+
+HR also maintains each profile's employment details: position, employment type, employee level (1–4), probation completion date, leaving date, active status, department and cost centre. They are blank until HR supplies them, and leave entitlement rules will treat a blank input as pending HR details rather than zero. Departments and cost centres are maintained on the Employees page; deactivate entries instead of deleting them.
 
 The `20261006000200_split_roles` migration changes the old combined role to HR and permits three distinct roles. Apply it with `npm run db:migrate`, then run `npm run db:seed` to create the separate Admin preview profile. No reset is required.
 
 ## Stored data
 
-- `employees`: profiles, join dates, and roles.
+- `employees`: profiles, join dates, roles, and HR-maintained employment details.
+- `departments`, `cost_centres`: HR-maintained classification lists.
 - `requests`: leave/claim requests and HR decision history fields.
 - `leave_entries`: requested hours for each date.
 - `claims`: reimbursement amounts.

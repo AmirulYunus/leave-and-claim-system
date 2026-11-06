@@ -59,6 +59,96 @@ try {
     (person) => person.email === input.email,
   );
   assert.equal(employee.role, "Employee");
+  assert.equal(employee.employee_level, null);
+  assert.equal(employee.is_active, true);
+
+  const [nameA, nameB] = [`${prefix} A`, `${prefix} B`];
+  await api(
+    "organisation",
+    "Employee",
+    "POST",
+    { type: "department", name: nameA },
+    403,
+  );
+  for (const name of [nameA, nameB])
+    await api("organisation", "HR", "POST", { type: "department", name }, 201);
+  await api(
+    "organisation",
+    "HR",
+    "POST",
+    { type: "costCentre", name: nameA },
+    201,
+  );
+  await api(
+    "organisation",
+    "HR",
+    "POST",
+    { type: "department", name: nameA },
+    409,
+  );
+  const lists = await api("organisation", "HR");
+  const [deptA, deptB] = [nameA, nameB].map((name) =>
+    lists.departments.find((entry) => entry.name === name),
+  );
+  const centre = lists.costCentres.find((entry) => entry.name === nameA);
+  const reload = async () =>
+    (await api("employees", "HR")).employees.find(
+      (person) => person.email === input.email,
+    );
+  await api(
+    "employees",
+    "HR",
+    "PATCH",
+    { ...employee, employee_level: 5 },
+    400,
+  );
+  await api(
+    "employees",
+    "HR",
+    "PATCH",
+    { ...employee, leaving_date: "2026-09-30" },
+    400,
+  );
+  await api("employees", "HR", "PATCH", {
+    ...employee,
+    employment_type: "Full-time",
+    employee_level: "2",
+    department_id: deptA.id,
+    cost_centre_id: centre.id,
+  });
+  await api("organisation", "HR", "PATCH", {
+    type: "department",
+    id: deptB.id,
+    name: deptB.name,
+    is_active: false,
+  });
+  const classified = await reload();
+  await api(
+    "employees",
+    "HR",
+    "PATCH",
+    { ...classified, department_id: deptB.id },
+    400,
+  );
+  await api("organisation", "HR", "PATCH", {
+    type: "department",
+    id: deptA.id,
+    name: deptA.name,
+    is_active: false,
+  });
+  await api("employees", "HR", "PATCH", { ...classified, position: "Analyst" });
+  const kept = await reload();
+  assert.deepEqual(
+    [
+      kept.employment_type,
+      kept.employee_level,
+      kept.department_id,
+      kept.cost_centre_id,
+      kept.position,
+    ],
+    ["Full-time", 2, deptA.id, centre.id, "Analyst"],
+  );
+
   await api("employees", "HR", "PATCH", { ...employee, name: "Updated by HR" });
   await api("employees", "HR", "PATCH", { ...employee, role: "Admin" }, 403);
   await api("employees", "Admin", "PATCH", { ...employee, role: "HR" });
@@ -82,7 +172,7 @@ try {
   assert.equal((await api("workspace", "HR")).employee.role, "HR");
   assert.equal((await api("workspace", "Admin")).employee.role, "Admin");
   console.log(
-    "PASS: Employee access denied; HR creates Employee and HR profiles, edits Employee profiles, and cannot create Admin or assign roles; Admin creates and assigns roles; requests scoped by employee ID.",
+    "PASS: Employee access denied; HR creates Employee and HR profiles, edits Employee profiles and employment details, maintains departments and cost centres, and cannot create Admin or assign roles; Admin creates and assigns roles; requests scoped by employee ID.",
   );
 } catch (error) {
   console.error(error.message);
@@ -91,5 +181,9 @@ try {
   await client.query("DELETE FROM employees WHERE email = ANY($1::text[])", [
     createdEmails,
   ]);
+  for (const table of ["departments", "cost_centres"])
+    await client.query(`DELETE FROM ${table} WHERE name LIKE $1`, [
+      `${prefix} %`,
+    ]);
   await client.end();
 }

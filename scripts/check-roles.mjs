@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import nextEnv from "@next/env";
 import pg from "pg";
+import { baseUrl, demoSessions, signIn } from "./sessions.mjs";
 
 nextEnv.loadEnvConfig(process.cwd());
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
@@ -11,10 +12,15 @@ const createdEmails = [
   `${prefix}-hr@example.test`,
 ];
 
-async function api(path, role, method = "GET", body, expected = 200) {
-  const response = await fetch(`http://localhost:3000/api/${path}`, {
+let sessions = {};
+// `who` is a demo role name or the Cookie header of another session.
+async function api(path, who, method = "GET", body, expected = 200) {
+  const response = await fetch(`${baseUrl}/api/${path}`, {
     method,
-    headers: { "Content-Type": "application/json", "x-demo-role": role },
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: sessions[who] ?? who,
+    },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const result = await response.json();
@@ -24,12 +30,15 @@ async function api(path, role, method = "GET", body, expected = 200) {
 
 try {
   await client.connect();
+  sessions = await demoSessions();
   const input = {
     name: "Permission check",
     email: createdEmails[0],
     join_date: "2026-10-01",
     role: "Employee",
+    temporary_password: "temporary-pass-1",
   };
+  await api("workspace", "", "GET", undefined, 401);
   await api("employees", "Employee", "GET", undefined, 403);
   await api("employees", "Employee", "POST", input, 403);
   await api(
@@ -52,13 +61,44 @@ try {
   );
   assert.equal(createdHr.role, "HR");
   await api("employees", "HR", "PATCH", createdHr, 403);
+  await api(
+    "employees",
+    "HR",
+    "POST",
+    { ...input, temporary_password: undefined },
+    400,
+  );
   await api("employees", "HR", "POST", input, 201);
   await api("employees", "HR", "POST", input, 409);
   const listing = await api("employees", "HR");
+  assert.ok(listing.employees.every((person) => !("password_hash" in person)));
   const employee = listing.employees.find(
     (person) => person.email === input.email,
   );
   assert.equal(employee.role, "Employee");
+  assert.equal(employee.must_change_password, true);
+
+  const firstSession = await signIn(input.email, input.temporary_password);
+  const pending = await api("workspace", firstSession, "GET", undefined, 403);
+  assert.equal(pending.code, "PASSWORD_CHANGE_REQUIRED");
+  await api(
+    "auth/password",
+    firstSession,
+    "POST",
+    { current_password: "not-the-password", new_password: "chosen-password-1" },
+    400,
+  );
+  await api("auth/password", firstSession, "POST", {
+    current_password: input.temporary_password,
+    new_password: "chosen-password-1",
+  });
+  await api("workspace", firstSession);
+  await api("employees", "HR", "PATCH", {
+    ...employee,
+    temporary_password: "reset-password-1",
+  });
+  await api("workspace", firstSession, "GET", undefined, 401);
+  await assert.rejects(signIn(input.email, "chosen-password-1"));
   assert.equal(employee.employee_level, null);
   assert.equal(employee.is_active, true);
 
@@ -172,7 +212,7 @@ try {
   assert.equal((await api("workspace", "HR")).employee.role, "HR");
   assert.equal((await api("workspace", "Admin")).employee.role, "Admin");
   console.log(
-    "PASS: Employee access denied; HR creates Employee and HR profiles, edits Employee profiles and employment details, maintains departments and cost centres, and cannot create Admin or assign roles; Admin creates and assigns roles; requests scoped by employee ID.",
+    "PASS: sign-in required; temporary passwords must be changed and can be reset; Employee access denied; HR creates Employee and HR profiles, edits Employee profiles and employment details, maintains departments and cost centres, and cannot create Admin or assign roles; Admin creates and assigns roles; requests scoped by employee ID.",
   );
 } catch (error) {
   console.error(error.message);

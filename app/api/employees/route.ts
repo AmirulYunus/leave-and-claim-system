@@ -1,6 +1,9 @@
 import { hasPermission } from "../../lib/permissions";
 import { database } from "../../lib/prisma";
-import { checkDevelopmentAccess, demoEmail } from "../../lib/demo-access";
+import { authenticate } from "../../lib/auth";
+import { hashPassword } from "../../lib/password";
+import { passwordProblem } from "../../lib/password-rules";
+import { endOtherSessions } from "../../lib/session";
 import { datesBetween } from "../../lib/time";
 import {
   newEmploymentDetails,
@@ -106,32 +109,35 @@ function failure(error: unknown) {
   );
 }
 
+const forbidden = () =>
+  Response.json({ error: "Forbidden", message: "Forbidden" }, { status: 403 });
+
+// An optional temporary password; the employee must change it at sign-in.
+async function temporaryPassword(value: unknown) {
+  if (value === undefined || value === "") return null;
+  const problem = passwordProblem(value);
+  if (problem) throw new ValidationError(`Temporary password: ${problem}`);
+  return hashPassword(value as string);
+}
+
 export async function GET(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
-    const actor = await database().employees.findUnique({
-      where: { email: demoEmail(request) },
-    });
-    if (!actor)
-      return Response.json(
-        { error: "Forbidden", message: "Forbidden" },
-        { status: 403 },
-      );
-    if (!(await hasPermission(actor.id, "user.view")))
-      return Response.json(
-        { error: "Forbidden", message: "Forbidden" },
-        { status: 403 },
-      );
+    const actor = await authenticate(request);
+    if (actor instanceof Response) return actor;
+    if (!(await hasPermission(actor.id, "user.view"))) return forbidden();
     const employees = await database().employees.findMany({
       orderBy: [{ name: "asc" }, { id: "asc" }],
     });
     return Response.json(
       {
         employees: employees.map((employee) => ({
-          ...employee,
-          ...storedDetails(employee),
+          id: employee.id,
+          name: employee.name,
+          email: employee.email,
+          role: employee.role,
           join_date: isoDate(employee.join_date),
+          must_change_password: employee.must_change_password,
+          ...storedDetails(employee),
         })),
       },
       { headers: { "Cache-Control": "no-store" } },
@@ -143,9 +149,9 @@ export async function GET(request: Request) {
 
 // HR can create Employee and HR profiles. Only Admin can create Admin profiles.
 export async function POST(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
+    const actor = await authenticate(request);
+    if (actor instanceof Response) return actor;
     const input = await request.json();
     const name = typeof input.name === "string" ? input.name.trim() : "";
     const email =
@@ -170,20 +176,12 @@ export async function POST(request: Request) {
       input.join_date,
       newEmploymentDetails,
     );
+    const password_hash = await temporaryPassword(input.temporary_password);
+    if (!password_hash)
+      throw new ValidationError("Set a temporary password for the account.");
     const denied = await database().$transaction(async (tx) => {
-      const actor = await tx.employees.findUnique({
-        where: { email: demoEmail(request) },
-      });
-      if (!actor)
-        return Response.json(
-          { error: "Forbidden", message: "Forbidden" },
-          { status: 403 },
-        );
       if (!(await hasPermission(actor.id, "user.create", tx)))
-        return Response.json(
-          { error: "Forbidden", message: "Forbidden" },
-          { status: 403 },
-        );
+        return forbidden();
       if (role !== "Employee")
         if (
           !(await hasPermission(
@@ -192,10 +190,7 @@ export async function POST(request: Request) {
             tx,
           ))
         )
-          return Response.json(
-            { error: "Forbidden", message: "Forbidden" },
-            { status: 403 },
-          );
+          return forbidden();
       await checkClassification(tx, details, newEmploymentDetails);
       await tx.employees.create({
         data: {
@@ -204,6 +199,8 @@ export async function POST(request: Request) {
           role,
           join_date: new Date(`${input.join_date}T00:00:00Z`),
           ...employmentData(details),
+          password_hash,
+          must_change_password: true,
         },
       });
     });
@@ -215,10 +212,11 @@ export async function POST(request: Request) {
 }
 
 // Edit employee details; only Admin can change roles or edit privileged profiles.
+// Resetting the temporary password or deactivating signs the employee out.
 export async function PATCH(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
+    const actor = await authenticate(request);
+    if (actor instanceof Response) return actor;
     const input = await request.json();
     if (!Number.isSafeInteger(input.id))
       throw new ValidationError("Invalid employee.");
@@ -232,36 +230,20 @@ export async function PATCH(request: Request) {
       throw new ValidationError("Enter a name and valid join date.");
     if (!["Employee", "HR", "Admin"].includes(input.role))
       throw new ValidationError("Invalid role.");
-    const denied = await database().$transaction(async (tx) => {
+    const password_hash = await temporaryPassword(input.temporary_password);
+    const result = await database().$transaction(async (tx) => {
       // Serialize edits so two changes cannot remove the last active Admin.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(-1::integer)`;
-      const actor = await tx.employees.findUnique({
-        where: { email: demoEmail(request) },
-      });
       const target = await tx.employees.findUnique({ where: { id: input.id } });
-      if (!actor)
-        return Response.json(
-          { error: "Forbidden", message: "Forbidden" },
-          { status: 403 },
-        );
       if (!(await hasPermission(actor.id, "user.update", tx)))
-        return Response.json(
-          { error: "Forbidden", message: "Forbidden" },
-          { status: 403 },
-        );
+        return forbidden();
       if (!target) throw new ValidationError("Employee not found.");
       if (target.role !== "Employee")
         if (!(await hasPermission(actor.id, "user.updatePrivileged", tx)))
-          return Response.json(
-            { error: "Forbidden", message: "Forbidden" },
-            { status: 403 },
-          );
+          return forbidden();
       if (input.role !== target.role)
         if (!(await hasPermission(actor.id, "user.assignRole", tx)))
-          return Response.json(
-            { error: "Forbidden", message: "Forbidden" },
-            { status: 403 },
-          );
+          return forbidden();
       const current = storedDetails(target);
       const details = employmentDetails(input, input.join_date, current);
       if (
@@ -281,10 +263,15 @@ export async function PATCH(request: Request) {
           join_date: new Date(`${input.join_date}T00:00:00Z`),
           role: input.role,
           ...employmentData(details),
+          ...(password_hash
+            ? { password_hash, must_change_password: true }
+            : {}),
         },
       });
+      return { signOut: Boolean(password_hash) || !details.is_active };
     });
-    if (denied) return denied;
+    if (result instanceof Response) return result;
+    if (result.signOut) await endOtherSessions(input.id);
     return Response.json({ saved: true });
   } catch (error) {
     return failure(error);

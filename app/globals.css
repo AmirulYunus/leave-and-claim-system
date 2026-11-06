@@ -840,6 +840,16 @@ td {
   display: flex;
   gap: 14px;
 }
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.auth-screen .modal {
+  max-width: 100%;
+}
 .modal form > label.checkbox-field {
   flex-direction: row;
   align-items: center;

@@ -15,6 +15,8 @@ import {
   employmentTypes,
   type EmploymentDetails,
 } from "./lib/employment";
+import { passwordLength } from "./lib/password-rules";
+import { AuthScreen } from "./auth-screen";
 
 type Employee = EmploymentDetails & {
   id: number;
@@ -22,6 +24,7 @@ type Employee = EmploymentDetails & {
   email: string;
   join_date: string;
   role: string;
+  must_change_password: boolean;
 };
 type OrganisationEntry = { id: number; name: string; is_active: boolean };
 type Organisation = {
@@ -155,7 +158,9 @@ export default function Home() {
     join_date: "2024-01-15",
   });
   const [view, setView] = useState("Dashboard");
-  const [role, setRole] = useState("Employee");
+  const [auth, setAuth] = useState<
+    "checking" | "signedOut" | "changePassword" | "signedIn"
+  >("checking");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [organisation, setOrganisation] = useState<Organisation>({
     departments: [],
@@ -219,11 +224,9 @@ export default function Home() {
   );
 
   async function refresh() {
-    const response = await fetch("/api/workspace", {
-      cache: "no-store",
-      headers: { "x-demo-role": role },
-    });
+    const response = await fetch("/api/workspace", { cache: "no-store" });
     const data = await response.json();
+    if (response.status === 401) setAuth("signedOut");
     if (!response.ok) throw new Error(data.error);
     setRequests(data.requests);
     setWorked(data.worked);
@@ -233,10 +236,25 @@ export default function Home() {
   }
   useEffect(() => {
     let active = true;
-    fetch("/api/workspace", {
-      cache: "no-store",
-      headers: { "x-demo-role": role },
-    })
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!active) return;
+        if (response.status === 401) setAuth("signedOut");
+        else if (!response.ok) throw new Error(data.error);
+        else setAuth(data.must_change_password ? "changePassword" : "signedIn");
+      })
+      .catch((error) => {
+        if (active) setConnectionError(error.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (auth !== "signedIn") return;
+    let active = true;
+    fetch("/api/workspace", { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
@@ -253,15 +271,22 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, [role]);
+  }, [auth]);
   async function persist(method: string, body: object) {
     const response = await fetch("/api/workspace", {
       method,
-      headers: { "Content-Type": "application/json", "x-demo-role": role },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     const data = await response.json();
+    if (response.status === 401) setAuth("signedOut");
     if (!response.ok) throw new Error(data.error);
+  }
+  async function signOut() {
+    if (busy) return;
+    setBusy(true);
+    await fetch("/api/auth/session", { method: "DELETE" }).catch(() => {});
+    window.location.reload();
   }
   async function saveTimesheet() {
     if (busy || !loaded) return;
@@ -425,7 +450,7 @@ export default function Home() {
   async function loadEmployees() {
     const [people, lists] = await Promise.all(
       ["/api/employees", "/api/organisation"].map((url) =>
-        fetch(url, { cache: "no-store", headers: { "x-demo-role": role } }),
+        fetch(url, { cache: "no-store" }),
       ),
     );
     const data = await people.json();
@@ -445,7 +470,7 @@ export default function Home() {
     try {
       const response = await fetch("/api/organisation", {
         method: body.id ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json", "x-demo-role": role },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type, ...body }),
       });
       const data = await response.json();
@@ -471,7 +496,7 @@ export default function Home() {
     try {
       const response = await fetch("/api/employees", {
         method: employeeEditor?.id ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json", "x-demo-role": role },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: employeeEditor?.id,
           name: form.get("name"),
@@ -485,6 +510,7 @@ export default function Home() {
           leaving_date: form.get("leaving_date"),
           department_id: form.get("department_id"),
           cost_centre_id: form.get("cost_centre_id"),
+          temporary_password: form.get("temporary_password"),
           ...(employeeEditor?.id
             ? { is_active: form.get("is_active") === "on" }
             : {}),
@@ -522,6 +548,8 @@ export default function Home() {
     setModal(kind);
   }
 
+  if (auth !== "signedIn")
+    return <AuthScreen mode={auth} problem={connectionError} />;
   return (
     <div className="workspace">
       <aside className="sidebar">
@@ -593,34 +621,14 @@ export default function Home() {
             Workspace <span className="breadcrumb">/ {view}</span>
           </span>
           <div className="topbar-right">
-            <span className="demo-tag">Demo workspace</span>
-            <label className="role-control">
-              <span className="sr-only">Preview role</span>
-              <select
-                aria-label="Preview role"
-                disabled={busy || dirtyTimesheet}
-                value={role}
-                onChange={(event) => {
-                  setLoaded(false);
-                  setEmployees([]);
-                  setEmployeeEditor(null);
-                  setModal(null);
-                  setMessage("");
-                  setRequests([]);
-                  setWorked({});
-                  setRole(event.target.value);
-                  navigate(
-                    event.target.value !== "Employee"
-                      ? "HR approvals"
-                      : "Dashboard",
-                  );
-                }}
-              >
-                <option>Employee</option>
-                <option>HR</option>
-                <option>Admin</option>
-              </select>
-            </label>
+            <button
+              className="button secondary"
+              disabled={busy || dirtyTimesheet}
+              title={dirtyTimesheet ? "Save your timesheet first." : undefined}
+              onClick={signOut}
+            >
+              Sign out
+            </button>
             <div className="avatar small">
               {employee.name
                 .split(" ")
@@ -1178,7 +1186,11 @@ export default function Home() {
                             (entry) => entry.id === person.department_id,
                           )?.name ?? "—"}
                         </td>
-                        <td>{person.is_active ? "Active" : "Inactive"}</td>
+                        <td>
+                          {person.is_active ? "Active" : "Inactive"}
+                          {person.must_change_password &&
+                            " · Temporary password"}
+                        </td>
                         <td>
                           <button
                             className="button secondary"
@@ -1237,7 +1249,7 @@ export default function Home() {
               People & co.{" "}
               <span> · A little less admin, a little more life.</span>
             </span>
-            <span>Local demo · Database storage · Login not yet enabled</span>
+            <span>Signed in as {employee.name}</span>
           </footer>
         </main>
       </div>
@@ -1265,8 +1277,9 @@ export default function Home() {
               </button>
             </div>
             <p className="modal-intro">
-              Create a profile now. Login credentials will be added with
-              authentication.
+              {employeeEditor.id
+                ? "Leave the temporary password blank to keep the current password."
+                : "Share the temporary password with the employee. They must change it when they first sign in."}
             </p>
             <form onSubmit={saveEmployee}>
               <label>
@@ -1412,6 +1425,19 @@ export default function Home() {
                 Leave entitlements stay pending until HR sets the join date,
                 employment type and employee level.
               </p>
+              <label>
+                {employeeEditor.id
+                  ? "Reset temporary password"
+                  : "Temporary password"}
+                <input
+                  name="temporary_password"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={passwordLength.min}
+                  maxLength={passwordLength.max}
+                  required={!employeeEditor.id}
+                />
+              </label>
               {error && (
                 <p className="form-error" role="alert">
                   {error}

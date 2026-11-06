@@ -1,6 +1,6 @@
 import { hasPermission } from "../../lib/permissions";
 import { database } from "../../lib/prisma";
-import { checkDevelopmentAccess, demoEmail } from "../../lib/demo-access";
+import { authenticate } from "../../lib/auth";
 import { Prisma } from "../../generated/prisma/client";
 import type { Permission } from "../../lib/permission-policy";
 
@@ -31,11 +31,11 @@ function failure(error: unknown) {
   );
 }
 
-async function authorised(request: Request, permission: Permission) {
-  const actor = await database().employees.findUnique({
-    where: { email: demoEmail(request) },
-  });
-  return !!actor && (await hasPermission(actor.id, permission));
+// The error response for a caller who lacks the permission, if any.
+async function deny(request: Request, permission: Permission) {
+  const actor = await authenticate(request);
+  if (actor instanceof Response) return actor;
+  if (!(await hasPermission(actor.id, permission))) return forbidden();
 }
 
 function checkType(type: unknown): asserts type is "department" | "costCentre" {
@@ -51,10 +51,9 @@ function name(input: { name?: unknown }) {
 }
 
 export async function GET(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
-    if (!(await authorised(request, "user.view"))) return forbidden();
+    const denied = await deny(request, "user.view");
+    if (denied) return denied;
     const order = [{ name: "asc" as const }, { id: "asc" as const }];
     const [departments, costCentres] = await Promise.all([
       database().departments.findMany({ orderBy: order }),
@@ -70,10 +69,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
-    if (!(await authorised(request, "organisation.manage"))) return forbidden();
+    const denied = await deny(request, "organisation.manage");
+    if (denied) return denied;
     const input = await request.json();
     checkType(input.type);
     const data = { name: name(input) };
@@ -89,10 +87,9 @@ export async function POST(request: Request) {
 // Rename or deactivate an entry. Entries are never deleted because employees
 // may still reference them.
 export async function PATCH(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
-    if (!(await authorised(request, "organisation.manage"))) return forbidden();
+    const denied = await deny(request, "organisation.manage");
+    if (denied) return denied;
     const input = await request.json();
     checkType(input.type);
     if (!Number.isSafeInteger(input.id) || typeof input.is_active !== "boolean")

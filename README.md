@@ -5,7 +5,7 @@ Next.js employee dashboard with hourly leave, expense claims, HR review, and mon
 ## Local setup
 
 1. Open Docker Desktop, then run `docker compose up -d` in this directory.
-2. Create `.env.local` with `DATABASE_URL=postgresql://leave_app:YOUR_URL_ENCODED_PASSWORD@localhost:5432/leave_and_claim`. Use the credentials configured in Compose. Keep real environment files out of Git.
+2. Create `.env.local` with `DATABASE_URL=postgresql://leave_app:YOUR_URL_ENCODED_PASSWORD@localhost:5432/leave_and_claim` and `SEED_PASSWORD=<12-128 characters>`. Use the credentials configured in Compose. Keep real environment files out of Git.
 3. Run:
 
 ```bash
@@ -18,11 +18,17 @@ npm run dev -- --hostname 127.0.0.1
 
 Open http://localhost:3000. Prisma migrations are tracked in `_prisma_migrations`; rerunning `db:deploy` applies only pending migrations. Seeding creates fictional employee profiles if absent and never resets existing data. No sample requests are inserted automatically.
 
-`npm run db:seed` runs `prisma/seed.ts` using Prisma and creates the local preview identities Amirul, HR, System Admin, Sarah Tan, and Daniel Lee using `example.test` emails. Their join dates are demo values.
+`npm run db:seed` runs `prisma/seed.ts` using Prisma and creates the local demo accounts Amirul (`amirul@example.test`, Employee), HR (`hr@example.test`), System Admin (`admin@example.test`), Sarah Tan, and Daniel Lee. Accounts without a password get `SEED_PASSWORD`; existing passwords are never changed. Their join dates are demo values.
+
+## Sign-in
+
+Users sign in with their email address and password. Sessions last 12 hours and are stored in the `sessions` table; the browser holds only a random token in an `httpOnly`, `SameSite=Lax` cookie, and the database stores its SHA-256 digest. Passwords are hashed with scrypt and must be 12–128 characters.
+
+When HR or Admin creates an account they set a temporary password and share it with the employee, who must choose a new password at first sign-in before using the app. Resetting the temporary password or deactivating an employee signs them out everywhere.
 
 ## Roles and employee management
 
-Select **HR** or **Admin**, then open **Employees** to add a profile with name, email, and join date. HR creates Employee and HR profiles and edits ordinary employee records. Admin creates Admin profiles and assigns Employee, HR, or Admin roles. Existing profile emails are read-only. At least one active Admin must remain.
+Sign in as HR or Admin, then open **Employees** to add a profile with name, email, join date, and temporary password. HR creates Employee and HR profiles and edits ordinary employee records. Admin creates Admin profiles and assigns Employee, HR, or Admin roles. Existing profile emails are read-only. At least one active Admin must remain.
 
 HR also maintains each profile's employment details: position, employment type, employee level (1–4), probation completion date, leaving date, active status, department and cost centre. They are blank until HR supplies them, and leave entitlement rules will treat a blank input as pending HR details rather than zero. Departments and cost centres are maintained on the Employees page; deactivate entries instead of deleting them.
 
@@ -41,7 +47,7 @@ Leave and claim submissions and HR decisions save immediately. Timesheet edits a
 
 ## Development boundary
 
-Login is not implemented. The role dropdown selects a local preview identity (Employee, HR, or Admin). API handlers check that identity’s database role: Employee sees their own requests; HR reviews requests and creates/edits Employee profiles; Admin can also create privileged profiles and change roles. These are preview permission checks, not authenticated access control. Employee profiles do not have login credentials yet. The API rejects production requests and non-localhost access. Do not use this preview with real HR data or deploy it as a live employee system. Proper sessions, authenticated identities, and role authorization must replace the demo identities before deployment.
+Every API handler requires a signed-in session and checks the employee's current database role: Employee sees their own requests; HR reviews requests and maintains Employee and HR profiles; Admin can also create Admin profiles and change roles. Cross-origin requests are rejected. Before staging or production, add sign-in rate limiting and serve the app over HTTPS so the session cookie is marked `Secure`.
 
 Leave balances currently cover the 2026 preview period. Company holidays, accrual/carry-forward, medical document uploads, maternity/paternity workflows, and payroll/overtime calculations are pending. See LEAVE_POLICY.md for confirmed policy and unresolved decisions.
 

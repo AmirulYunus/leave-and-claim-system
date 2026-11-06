@@ -1,5 +1,5 @@
 import { hasPermission } from "../../lib/permissions";
-import { checkDevelopmentAccess, demoEmail } from "../../lib/demo-access";
+import { authenticate } from "../../lib/auth";
 import { database } from "../../lib/prisma";
 import {
   annualAllowance,
@@ -33,16 +33,9 @@ type Transaction = Prisma.TransactionClient;
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 const dbDate = (date: string) => new Date(`${date}T00:00:00Z`);
 
-async function getEmployeeProfile(
-  tx: Transaction,
-  email = "amirul@example.test",
-) {
-  const employee = await tx.employees.findUnique({ where: { email } });
-  if (!employee)
-    throw new ValidationError(
-      "Run npm run db:seed to create the demo profiles.",
-    );
-  return employee;
+// Re-read the signed-in employee inside the transaction.
+function getEmployeeProfile(tx: Transaction, id: number) {
+  return tx.employees.findUniqueOrThrow({ where: { id } });
 }
 async function getLeaveRecords(
   tx: Transaction,
@@ -130,12 +123,12 @@ async function validateLeaveEntries(
 
 // Load the requests and worked hours displayed in the workspace.
 export async function GET(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
+    const actor = await authenticate(request);
+    if (actor instanceof Response) return actor;
     const data = await database().$transaction(
       async (tx) => {
-        const employee = await getEmployeeProfile(tx, demoEmail(request));
+        const employee = await getEmployeeProfile(tx, actor.id);
         if (!(await hasPermission(employee.id, "request.view", tx)))
           return Response.json(
             { error: "Forbidden", message: "Forbidden" },
@@ -199,9 +192,9 @@ export async function GET(request: Request) {
 
 // Validate and save a new leave request or expense claim.
 export async function POST(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
+    const actor = await authenticate(request);
+    if (actor instanceof Response) return actor;
     const input = await request.json();
     if (
       !["Leave", "Claim"].includes(input.kind) ||
@@ -238,7 +231,7 @@ export async function POST(request: Request) {
         "Enter a claim amount from RM 0.01 to RM 100,000 with at most two decimal places.",
       );
     const denied = await database().$transaction(async (tx) => {
-      const employee = await getEmployeeProfile(tx, demoEmail(request));
+      const employee = await getEmployeeProfile(tx, actor.id);
       if (
         !(await hasPermission(
           employee.id,
@@ -294,20 +287,14 @@ export async function POST(request: Request) {
 
 // Review a pending request and record the HR decision.
 export async function PATCH(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
-    const reviewer = await database().employees.findUnique({
-      where: { email: demoEmail(request) },
-    });
+    const reviewer = await authenticate(request);
+    if (reviewer instanceof Response) return reviewer;
     // Reject non-reviewers before any lookup so request IDs are not disclosed.
-    if (
-      !reviewer ||
-      !(
-        (await hasPermission(reviewer.id, "leave.approve")) ||
-        (await hasPermission(reviewer.id, "claim.approve"))
-      )
-    )
+    if (!(
+      (await hasPermission(reviewer.id, "leave.approve")) ||
+      (await hasPermission(reviewer.id, "claim.approve"))
+    ))
       return Response.json(
         { error: "Forbidden", message: "Forbidden" },
         { status: 403 },
@@ -377,9 +364,9 @@ export async function PATCH(request: Request) {
 
 // Validate and save the edited monthly timesheet.
 export async function PUT(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
+    const actor = await authenticate(request);
+    if (actor instanceof Response) return actor;
     const input = await request.json();
     if (
       typeof input.month !== "string" ||
@@ -405,7 +392,7 @@ export async function PUT(request: Request) {
         );
     }
     const denied = await database().$transaction(async (tx) => {
-      const employee = await getEmployeeProfile(tx, demoEmail(request));
+      const employee = await getEmployeeProfile(tx, actor.id);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${employee.id}::integer)`;
       if (!(await hasPermission(employee.id, "timesheet.updateOwn", tx)))
         return Response.json(

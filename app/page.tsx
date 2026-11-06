@@ -72,7 +72,6 @@ type Request = {
   details?: LeaveDetails;
   attachments?: { id: number; file_name: string; size_bytes: number }[];
 };
-const uniformDurationCategories = ["Emergency leave", "Training leave"];
 // Category details shown under a request, e.g. birth and notice dates.
 function requestFacts(request: Request) {
   const details = request.details;
@@ -93,11 +92,11 @@ function requestFacts(request: Request) {
 }
 const leaveHelp: Record<string, string> = {
   "Annual leave":
-    "Weekends excluded · Choose any positive number of hours, up to 8 per working day. 8 hours = 1 day. Company public holidays are not configured yet.",
+    "Every weekday from the start to the end date, as half days (4 hours) or full days (8 hours). Public holidays are not excluded automatically; choose the dates you need.",
   "Medical leave":
-    "Medical leave follows certificate dates in full days. HR must verify certification and eligibility.",
+    "Weekdays covered by your medical certificate, as half or full days. HR must verify certification and eligibility.",
   "Hospitalisation leave":
-    "Hospitalisation leave follows certificate dates in full days. HR must verify certification and eligibility.",
+    "Weekdays covered by your certificate, as half or full days. HR must verify certification and eligibility.",
   "Emergency leave":
     "For unexpected emergencies; you may apply after the leave. Upload supporting evidence: HR cannot approve without it. Approved hours are charged to Annual Leave.",
   "Training leave":
@@ -245,24 +244,15 @@ export default function Home() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [leaveCategory, setLeaveCategory] = useState("Annual leave");
-  const [leaveHours, setLeaveHours] = useState<Record<string, string>>({});
   const [uniformHours, setUniformHours] = useState("8");
   const [trainingCategory, setTrainingCategory] = useState("");
-  const isMedical =
-    leaveCategory === "Medical leave" ||
-    leaveCategory === "Hospitalisation leave";
   const fixedDays = fixedLengthDays[leaveCategory];
-  const uniformDuration = uniformDurationCategories.includes(leaveCategory);
   const leaveDates = startDate
     ? scheduleDates(leaveCategory, startDate, endDate)
     : [];
   const leaveEnd = fixedDays ? (leaveDates.at(-1) ?? "") : endDate;
-  const hoursFor = (date: string) =>
-    isMedical || fixedDays
-      ? 8
-      : uniformDuration
-        ? Number(uniformHours)
-        : Number(leaveHours[date] ?? "8");
+  // Fixed-length leave is taken in full days; other leave uses one duration.
+  const leaveHoursPerDate = fixedDays ? 8 : Number(uniformHours);
   const monthDates = month
     ? datesBetween(
         `${month}-01`,
@@ -441,7 +431,10 @@ export default function Home() {
     const category = String(data.get("category"));
     let value = Number(data.get("amount"));
     let detail = String(data.get("description") || "");
-    const entries = leaveDates.map((date) => ({ date, hours: hoursFor(date) }));
+    const entries = leaveDates.map((date) => ({
+      date,
+      hours: leaveHoursPerDate,
+    }));
     const documentFile = data.get("document");
     if (modal === "Leave") {
       if (!fixedDays && startDate.slice(0, 4) !== endDate.slice(0, 4)) {
@@ -670,7 +663,6 @@ export default function Home() {
     setError("");
     setStartDate("");
     setEndDate("");
-    setLeaveHours({});
     setUniformHours("8");
     setTrainingCategory("");
     setLeaveCategory("Annual leave");
@@ -1721,10 +1713,7 @@ export default function Home() {
                   name="category"
                   value={modal === "Leave" ? leaveCategory : undefined}
                   onChange={(e) => {
-                    if (modal === "Leave") {
-                      setLeaveCategory(e.target.value);
-                      setLeaveHours({});
-                    }
+                    if (modal === "Leave") setLeaveCategory(e.target.value);
                   }}
                 >
                   {(modal === "Leave"
@@ -1745,10 +1734,7 @@ export default function Home() {
                         name="start"
                         type="date"
                         value={startDate}
-                        onInput={(e) => {
-                          setStartDate(e.currentTarget.value);
-                          setLeaveHours({});
-                        }}
+                        onInput={(e) => setStartDate(e.currentTarget.value)}
                         required
                       />
                     </label>
@@ -1760,10 +1746,7 @@ export default function Home() {
                         min={startDate}
                         value={leaveEnd}
                         readOnly={Boolean(fixedDays)}
-                        onInput={(e) => {
-                          setEndDate(e.currentTarget.value);
-                          setLeaveHours({});
-                        }}
+                        onInput={(e) => setEndDate(e.currentTarget.value)}
                         required
                       />
                     </label>
@@ -1811,7 +1794,7 @@ export default function Home() {
                       </label>
                     </div>
                   )}
-                  {uniformDuration && (
+                  {!fixedDays && (
                     <label>
                       Duration for every date
                       <select
@@ -1830,42 +1813,12 @@ export default function Home() {
                     </p>
                   )}
                   {!fixedDays && leaveDates.length > 0 && (
-                    <div className="leave-hours-list">
-                      {leaveDates.map((date) => (
-                        <label key={date}>
-                          {dateLabel(date)}
-                          <input
-                            aria-label={`Leave hours ${date}`}
-                            type="number"
-                            min="0"
-                            max="8"
-                            step="any"
-                            required
-                            readOnly={isMedical || uniformDuration}
-                            value={String(hoursFor(date))}
-                            onChange={(e) =>
-                              setLeaveHours((previous) => ({
-                                ...previous,
-                                [date]: e.target.value,
-                              }))
-                            }
-                          />
-                        </label>
-                      ))}
-                      <p>
-                        Total:{" "}
-                        {leaveDates.reduce(
-                          (sum, date) => sum + hoursFor(date),
-                          0,
-                        )}{" "}
-                        hours (
-                        {leaveDates.reduce(
-                          (sum, date) => sum + hoursFor(date),
-                          0,
-                        ) / 8}{" "}
-                        days)
-                      </p>
-                    </div>
+                    <p className="field-help">
+                      {leaveDates.length} weekday
+                      {leaveDates.length === 1 ? "" : "s"} × {leaveHoursPerDate}{" "}
+                      hours = {leaveDates.length * leaveHoursPerDate} hours (
+                      {days(leaveDates.length * leaveHoursPerDate)} days).
+                    </p>
                   )}
                 </>
               ) : (

@@ -3,7 +3,6 @@ import { authenticate } from "../../lib/auth";
 import { database } from "../../lib/prisma";
 import {
   datesBetween,
-  isWeekday,
   validateLeave,
   type LeaveEntry,
 } from "../../lib/time";
@@ -171,7 +170,6 @@ async function validateLeaveEntries(
   details: LeaveDetails,
   { excludeId, submitting }: { excludeId?: number; submitting: boolean },
 ) {
-  const medical = ["Medical leave", "Hospitalisation leave"].includes(category);
   const fixed = isFixedLength(category);
   if (
     !entries.length ||
@@ -179,17 +177,8 @@ async function validateLeaveEntries(
     new Set(entries.map((entry) => entry.date)).size !== entries.length
   )
     throw new ValidationError("Choose unique eligible dates.");
-  if (
-    entries.some(
-      (entry) =>
-        datesBetween(entry.date, entry.date).length !== 1 ||
-        (!medical && !fixed && !isWeekday(entry.date)) ||
-        (medical && entry.hours !== 8),
-    )
-  )
-    throw new ValidationError(
-      "Use eligible dates. Medical leave is recorded in full days.",
-    );
+  if (entries.some((entry) => datesBetween(entry.date, entry.date).length !== 1))
+    throw new ValidationError("Use valid calendar dates.");
   const schedule = scheduleProblem(category, entries);
   if (schedule) throw new ValidationError(schedule);
   if (submitting) {

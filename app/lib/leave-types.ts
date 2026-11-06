@@ -20,13 +20,13 @@ export const trainingCategories = [
   "Employee-Requested External",
 ] as const;
 
-// Consecutive calendar-day categories and their fixed length in days.
+// Consecutive calendar-day categories and their fixed length in days, taken
+// in full days. Every other category covers each weekday in its range with one
+// half-day (4 hours) or full-day (8 hours) duration.
 export const fixedLengthDays: Record<string, number> = {
   "Maternity leave": 98,
   "Paternity leave": 7,
 };
-// Weekday categories recorded as one uniform 4- or 8-hour duration.
-const uniformWeekdayCategories = ["Emergency leave", "Training leave"];
 
 export type LeaveDetails = {
   expected_birth_on: string | null;
@@ -78,10 +78,7 @@ export function subtractMonths(date: string, months: number) {
 export function scheduleDates(category: string, start: string, end: string) {
   const length = fixedLengthDays[category];
   if (length) return datesBetween(start, addDays(start, length - 1));
-  const dates = datesBetween(start, end);
-  return ["Medical leave", "Hospitalisation leave"].includes(category)
-    ? dates
-    : dates.filter(isWeekday);
+  return datesBetween(start, end).filter(isWeekday);
 }
 
 // Category-specific date and duration rules for the saved entries.
@@ -98,21 +95,17 @@ export function scheduleProblem(category: string, entries: LeaveEntry[]) {
       return `${category} covers ${length} consecutive calendar days in full days.`;
     return "";
   }
-  if (uniformWeekdayCategories.includes(category)) {
-    const weekdays = datesBetween(dates[0], dates.at(-1) ?? "").filter(
-      isWeekday,
-    );
-    if (
-      weekdays.length !== dates.length ||
-      weekdays.some((date, index) => date !== dates[index])
-    )
-      return `${category} must include every weekday in its date range.`;
-    if (
-      ![4, 8].includes(entries[0].hours) ||
-      entries.some((entry) => entry.hours !== entries[0].hours)
-    )
-      return `${category} uses one duration for every date: half day (4 hours) or full day (8 hours).`;
-  }
+  const weekdays = datesBetween(dates[0], dates.at(-1) ?? "").filter(isWeekday);
+  if (
+    weekdays.length !== dates.length ||
+    weekdays.some((date, index) => date !== dates[index])
+  )
+    return `${category} must include every weekday in its date range.`;
+  if (
+    ![4, 8].includes(entries[0].hours) ||
+    entries.some((entry) => entry.hours !== entries[0].hours)
+  )
+    return `${category} uses one duration for every date: half day (4 hours) or full day (8 hours).`;
   return "";
 }
 

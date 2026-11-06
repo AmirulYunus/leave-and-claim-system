@@ -45,10 +45,17 @@ test("maternity and paternity cover fixed consecutive calendar days", () => {
   );
 });
 
-test("emergency and training use every weekday with one 4 or 8 hour duration", () => {
-  const week = scheduleDates("Emergency leave", "2026-11-06", "2026-11-10");
+test("weekday leave uses every weekday with one 4 or 8 hour duration", () => {
+  const week = scheduleDates("Medical leave", "2026-11-06", "2026-11-10");
   assert.deepEqual(week, ["2026-11-06", "2026-11-09", "2026-11-10"]);
-  for (const category of ["Emergency leave", "Training leave"]) {
+  for (const category of [
+    "Annual leave",
+    "Medical leave",
+    "Hospitalisation leave",
+    "Emergency leave",
+    "Training leave",
+    "Unpaid leave",
+  ]) {
     assert.equal(
       scheduleProblem(
         category,
@@ -71,6 +78,11 @@ test("emergency and training use every weekday with one 4 or 8 hour duration", (
       scheduleProblem(category, fullDays([week[0], week[2]])),
       "",
       "a skipped weekday",
+    );
+    assert.notEqual(
+      scheduleProblem(category, fullDays(["2026-11-07"])),
+      "",
+      "a weekend date",
     );
   }
 });

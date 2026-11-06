@@ -61,8 +61,9 @@ Every API handler requires a signed-in session and checks the employee's current
 
 `app/lib/leave-types.ts` holds the category rules carried over from the Dataverse solution (see `scripts/dataverse/LEAVE_RULES_RECHECK_2026-10-25.md`). HR approves every type.
 
-- **Emergency leave:** weekdays, one 4- or 8-hour duration for every date, and may be requested after the leave. HR cannot approve it until a supporting document is attached. Approved hours are charged to Annual Leave.
-- **Training leave:** weekdays with one 4- or 8-hour duration. The employee chooses Company Required (not charged) or Employee-Requested External (charged to Annual Leave).
+- **Durations:** annual, medical, hospitalisation, emergency, training and unpaid leave cover every weekday from the start to the end date, with one duration for every date: half day (4 hours) or full day (8 hours). Fractional hours and weekend dates are refused.
+- **Emergency leave:** may be requested after the leave. HR cannot approve it until a supporting document is attached. Approved hours are charged to Annual Leave.
+- **Training leave:** the employee chooses Company Required (not charged) or Employee-Requested External (charged to Annual Leave).
 - **Maternity leave:** 98 consecutive calendar days from the start date, with the expected confinement date and formal notice date. The 60-day notice window is left to HR's judgement rather than enforced.
 - **Paternity leave:** 7 consecutive calendar days that must start on the verified birth date, with a notice date and an expected or actual birth date. Approval requires 12 months of service and refuses a repeat approval for the same birth or a sixth confinement. HR enters the verified birth date when approving if the employee could not.
 - Maternity and paternity leave may cross a year end; other types must fall in one calendar year.

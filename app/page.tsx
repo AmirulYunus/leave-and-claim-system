@@ -3,20 +3,51 @@
 import { FormEvent, useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  annualAllowance,
-  sickAllowance,
   datesBetween,
   isWeekday,
   validateLeave,
   type LeaveEntry,
 } from "./lib/time";
+import {
+  employeeLevels,
+  employmentTypes,
+  type EmploymentDetails,
+} from "./lib/employment";
+import { passwordLength } from "./lib/password-rules";
+import { malaysiaDate } from "./lib/entitlement";
+import { AuthScreen } from "./auth-screen";
 
-type Employee = {
+type Employee = EmploymentDetails & {
   id: number;
   name: string;
   email: string;
   join_date: string;
   role: string;
+  must_change_password: boolean;
+};
+type OrganisationEntry = { id: number; name: string; is_active: boolean };
+// Usable hours this year per entitled category, or why none are available yet.
+type Allowance = {
+  hours: number | null;
+  reason: string;
+  rateDays: number | null;
+};
+type Entitlements = {
+  year: number;
+  asOf: string;
+  annual: Allowance;
+  medical: Allowance;
+  hospitalisation: Allowance;
+};
+const allowanceKeys: Record<string, keyof Entitlements> = {
+  "Annual leave": "annual",
+  "Medical leave": "medical",
+  "Hospitalisation leave": "hospitalisation",
+};
+const days = (hours: number) => Math.round((hours / 8) * 100) / 100;
+type Organisation = {
+  departments: OrganisationEntry[];
+  costCentres: OrganisationEntry[];
 };
 
 type Request = {
@@ -66,6 +97,73 @@ function Icon({ name }: { name: string }) {
   );
 }
 
+function OrganisationList({
+  title,
+  noun,
+  entries,
+  disabled,
+  onSave,
+}: {
+  title: string;
+  noun: string;
+  entries: OrganisationEntry[];
+  disabled: boolean;
+  onSave: (body: {
+    id?: number;
+    name: string;
+    is_active?: boolean;
+  }) => Promise<boolean>;
+}) {
+  return (
+    <div className="organisation-list">
+      <h3>{title}</h3>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const form = event.currentTarget;
+          const name = String(new FormData(form).get("name") ?? "").trim();
+          if (name && (await onSave({ name }))) form.reset();
+        }}
+      >
+        <input
+          name="name"
+          maxLength={100}
+          placeholder={`New ${noun}`}
+          aria-label={`New ${noun}`}
+          required
+        />
+        <button className="button secondary" disabled={disabled}>
+          Add
+        </button>
+      </form>
+      <ul>
+        {entries.map((entry) => (
+          <li key={entry.id}>
+            <span>
+              {entry.name}
+              {entry.is_active ? "" : " (inactive)"}
+            </span>
+            <button
+              className="button secondary"
+              disabled={disabled}
+              onClick={() =>
+                onSave({
+                  id: entry.id,
+                  name: entry.name,
+                  is_active: !entry.is_active,
+                })
+              }
+            >
+              {entry.is_active ? "Deactivate" : "Activate"}
+            </button>
+          </li>
+        ))}
+        {!entries.length && <li>None yet.</li>}
+      </ul>
+    </div>
+  );
+}
+
 export default function Home() {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -78,8 +176,14 @@ export default function Home() {
     join_date: "2024-01-15",
   });
   const [view, setView] = useState("Dashboard");
-  const [role, setRole] = useState("Employee");
+  const [auth, setAuth] = useState<
+    "checking" | "signedOut" | "changePassword" | "signedIn"
+  >("checking");
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [organisation, setOrganisation] = useState<Organisation>({
+    departments: [],
+    costCentres: [],
+  });
   const [employeeEditor, setEmployeeEditor] =
     useState<Partial<Employee> | null>(null);
   const canManageEmployees = loaded && ["HR", "Admin"].includes(employee.role);
@@ -88,14 +192,13 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("All");
-  const [month, setMonth] = useState("2026-10");
+  const [month, setMonth] = useState(() => malaysiaDate().slice(0, 7));
+  const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [worked, setWorked] = useState<Record<string, string>>({});
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [leaveCategory, setLeaveCategory] = useState("Annual leave");
   const [leaveHours, setLeaveHours] = useState<Record<string, string>>({});
-  const allowance = annualAllowance(employee.join_date, "2026-10-06"); // Demo employee join date.
-  const medicalAllowance = sickAllowance(employee.join_date, "2026-10-06");
   const isMedical =
     leaveCategory === "Medical leave" ||
     leaveCategory === "Hospitalisation leave";
@@ -112,16 +215,27 @@ export default function Home() {
     (request) => request.employee_id === employee.id,
   );
   const pending = requests.filter((request) => request.status === "Pending");
-  const balance =
-    allowance -
+  // Hours of a category this year in requests with one of the given statuses.
+  const usedHours = (category: string, statuses: Request["status"][]) =>
     mine
       .filter(
         (request) =>
           request.kind === "Leave" &&
-          request.category === "Annual leave" &&
-          request.status === "Approved",
+          request.category === category &&
+          statuses.includes(request.status),
       )
-      .reduce((sum, request) => sum + request.value, 0);
+      .flatMap((request) => request.entries ?? [])
+      .filter((entry) => entry.date.startsWith(`${entitlements?.year}-`))
+      .reduce((sum, entry) => sum + entry.hours, 0);
+  const allowanceFor = (category: string) => {
+    const key = allowanceKeys[category];
+    return key ? (entitlements?.[key] as Allowance | undefined) : undefined;
+  };
+  const annual = entitlements?.annual;
+  const annualUsed = usedHours("Annual leave", ["Approved"]);
+  const annualAvailable =
+    annual?.hours == null ? null : annual.hours - annualUsed;
+  const medical = entitlements?.medical;
   const awaitingClaims = mine
     .filter(
       (request) => request.kind === "Claim" && request.status === "Pending",
@@ -138,24 +252,38 @@ export default function Home() {
   );
 
   async function refresh() {
-    const response = await fetch("/api/workspace", {
-      cache: "no-store",
-      headers: { "x-demo-role": role },
-    });
+    const response = await fetch("/api/workspace", { cache: "no-store" });
     const data = await response.json();
+    if (response.status === 401) setAuth("signedOut");
     if (!response.ok) throw new Error(data.error);
     setRequests(data.requests);
     setWorked(data.worked);
     setEmployee(data.employee);
+    setEntitlements(data.entitlements);
     setLoaded(true);
     setConnectionError("");
   }
   useEffect(() => {
     let active = true;
-    fetch("/api/workspace", {
-      cache: "no-store",
-      headers: { "x-demo-role": role },
-    })
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!active) return;
+        if (response.status === 401) setAuth("signedOut");
+        else if (!response.ok) throw new Error(data.error);
+        else setAuth(data.must_change_password ? "changePassword" : "signedIn");
+      })
+      .catch((error) => {
+        if (active) setConnectionError(error.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (auth !== "signedIn") return;
+    let active = true;
+    fetch("/api/workspace", { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
@@ -163,6 +291,7 @@ export default function Home() {
           setRequests(data.requests);
           setWorked(data.worked);
           setEmployee(data.employee);
+          setEntitlements(data.entitlements);
           setLoaded(true);
         }
       })
@@ -172,15 +301,22 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, [role]);
+  }, [auth]);
   async function persist(method: string, body: object) {
     const response = await fetch("/api/workspace", {
       method,
-      headers: { "Content-Type": "application/json", "x-demo-role": role },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     const data = await response.json();
+    if (response.status === 401) setAuth("signedOut");
     if (!response.ok) throw new Error(data.error);
+  }
+  async function signOut() {
+    if (busy) return;
+    setBusy(true);
+    await fetch("/api/auth/session", { method: "DELETE" }).catch(() => {});
+    window.location.reload();
   }
   async function saveTimesheet() {
     if (busy || !loaded) return;
@@ -225,32 +361,25 @@ export default function Home() {
         setError("Submit separate requests for each calendar year.");
         return;
       }
-      if (startDate.slice(0, 4) !== "2026") {
-        setError("This demo has balances for 2026 only.");
+      if (startDate.slice(0, 4) !== String(entitlements?.year)) {
+        setError(
+          `Leave can be requested for ${entitlements?.year} dates only.`,
+        );
+        return;
+      }
+      const allowance = allowanceFor(category);
+      if (allowance && allowance.hours === null) {
+        setError(`${category} is unavailable: ${allowance.reason}`);
         return;
       }
       const existing = mine
         .filter((r) => r.kind === "Leave" && r.status !== "Rejected")
         .flatMap((r) => r.entries ?? []);
-      const reserved = mine
-        .filter((r) => r.category === category && r.status === "Pending")
-        .reduce((sum, r) => sum + r.value * 8, 0);
-      const categoryBalance =
-        category === "Annual leave"
-          ? balance * 8
-          : category === "Medical leave" || category === "Hospitalisation leave"
-            ? ((category === "Medical leave" ? medicalAllowance : 60) -
-                mine
-                  .filter(
-                    (r) => r.category === category && r.status === "Approved",
-                  )
-                  .reduce((sum, r) => sum + r.value, 0)) *
-              8
-            : Infinity;
       const validation = validateLeave(
         entries,
         existing,
-        categoryBalance - reserved,
+        (allowance?.hours ?? Infinity) -
+          usedHours(category, ["Pending", "Approved"]),
       );
       if (validation) {
         setError(validation);
@@ -342,13 +471,44 @@ export default function Home() {
     }
   }
   async function loadEmployees() {
-    const response = await fetch("/api/employees", {
-      cache: "no-store",
-      headers: { "x-demo-role": role },
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
+    const [people, lists] = await Promise.all(
+      ["/api/employees", "/api/organisation"].map((url) =>
+        fetch(url, { cache: "no-store" }),
+      ),
+    );
+    const data = await people.json();
+    if (!people.ok) throw new Error(data.error);
+    const listData = await lists.json();
+    if (!lists.ok) throw new Error(listData.error);
     setEmployees(data.employees);
+    setOrganisation(listData);
+  }
+  async function saveOrganisation(
+    type: "department" | "costCentre",
+    body: { id?: number; name: string; is_active?: boolean },
+  ) {
+    if (busy || !loaded) return false;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/organisation", {
+        method: body.id ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, ...body }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      await loadEmployees();
+      setMessage("Organisation list saved.");
+      return true;
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error ? error.message : "Could not save the list.",
+      );
+      return false;
+    } finally {
+      setBusy(false);
+    }
   }
   async function saveEmployee(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -359,13 +519,24 @@ export default function Home() {
     try {
       const response = await fetch("/api/employees", {
         method: employeeEditor?.id ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json", "x-demo-role": role },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: employeeEditor?.id,
           name: form.get("name"),
           email: form.get("email"),
           join_date: form.get("join_date"),
           role: form.get("role") ?? "Employee",
+          position: form.get("position"),
+          employment_type: form.get("employment_type"),
+          employee_level: form.get("employee_level"),
+          probation_completed_on: form.get("probation_completed_on"),
+          leaving_date: form.get("leaving_date"),
+          department_id: form.get("department_id"),
+          cost_centre_id: form.get("cost_centre_id"),
+          temporary_password: form.get("temporary_password"),
+          ...(employeeEditor?.id
+            ? { is_active: form.get("is_active") === "on" }
+            : {}),
         }),
       });
       const data = await response.json();
@@ -400,6 +571,8 @@ export default function Home() {
     setModal(kind);
   }
 
+  if (auth !== "signedIn")
+    return <AuthScreen mode={auth} problem={connectionError} />;
   return (
     <div className="workspace">
       <aside className="sidebar">
@@ -471,34 +644,14 @@ export default function Home() {
             Workspace <span className="breadcrumb">/ {view}</span>
           </span>
           <div className="topbar-right">
-            <span className="demo-tag">Demo workspace</span>
-            <label className="role-control">
-              <span className="sr-only">Preview role</span>
-              <select
-                aria-label="Preview role"
-                disabled={busy || dirtyTimesheet}
-                value={role}
-                onChange={(event) => {
-                  setLoaded(false);
-                  setEmployees([]);
-                  setEmployeeEditor(null);
-                  setModal(null);
-                  setMessage("");
-                  setRequests([]);
-                  setWorked({});
-                  setRole(event.target.value);
-                  navigate(
-                    event.target.value !== "Employee"
-                      ? "HR approvals"
-                      : "Dashboard",
-                  );
-                }}
-              >
-                <option>Employee</option>
-                <option>HR</option>
-                <option>Admin</option>
-              </select>
-            </label>
+            <button
+              className="button secondary"
+              disabled={busy || dirtyTimesheet}
+              title={dirtyTimesheet ? "Save your timesheet first." : undefined}
+              onClick={signOut}
+            >
+              Sign out
+            </button>
             <div className="avatar small">
               {employee.name
                 .split(" ")
@@ -511,7 +664,17 @@ export default function Home() {
         <main>
           <div className="page-heading">
             <div>
-              <div className="eyebrow">TUESDAY, 6 OCTOBER 2026</div>
+              <div className="eyebrow">
+                {entitlements &&
+                  new Date(`${entitlements.asOf}T00:00:00`)
+                    .toLocaleDateString("en-GB", {
+                      weekday: "long",
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    })
+                    .toUpperCase()}
+              </div>
               <h1>
                 {view === "Dashboard"
                   ? `Good morning, ${employee.name}`
@@ -593,47 +756,75 @@ export default function Home() {
                         <Icon name="leave" />
                       </span>
                     </div>
-                    <div className="stat-number">
-                      {balance}
-                      <span>days available</span>
-                    </div>
-                    <div className="balance-track">
-                      <span
-                        style={{
-                          width: `${Math.max(0, (balance / allowance) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                    <div className="stat-footer">
-                      {allowance - balance} of {allowance} days used{" "}
-                      <span>{balance * 8} hours available</span>
-                    </div>
+                    {annual?.hours == null || annualAvailable === null ? (
+                      <>
+                        <div className="stat-number">
+                          Pending
+                          <span>HR details or policy</span>
+                        </div>
+                        <p className="stat-subtext">
+                          {annual?.reason || "Loading your entitlement…"}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="stat-number">
+                          {days(annualAvailable)}
+                          <span>days available</span>
+                        </div>
+                        <div className="balance-track">
+                          <span
+                            style={{
+                              width: `${annual.hours ? Math.max(0, (annualAvailable / annual.hours) * 100) : 0}%`,
+                            }}
+                          />
+                        </div>
+                        <div className="stat-footer">
+                          {days(annualUsed)} of {days(annual.hours)} earned days
+                          used{" "}
+                          <span>
+                            {annual.rateDays} days a year, earned monthly
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
                   <div className="stat-card">
                     <div className="stat-title">
                       Medical leave <span className="icon-soft">✚</span>
                     </div>
-                    <div className="stat-number">
-                      {medicalAllowance -
-                        mine
-                          .filter(
-                            (r) =>
-                              r.category === "Medical leave" &&
-                              r.status === "Approved",
-                          )
-                          .reduce((sum, r) => sum + r.value, 0)}
-                      <span>days available</span>
-                    </div>
-                    <p className="stat-subtext">
-                      Here when you need to recover.
-                    </p>
-                    <div className="stat-footer">
-                      Annual allowance{" "}
-                      <span>
-                        {medicalAllowance} days · 60 hospitalisation days
-                        separately
-                      </span>
-                    </div>
+                    {medical?.hours == null ? (
+                      <>
+                        <div className="stat-number">
+                          Pending
+                          <span>HR details or policy</span>
+                        </div>
+                        <p className="stat-subtext">
+                          {medical?.reason || "Loading your entitlement…"}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="stat-number">
+                          {days(
+                            medical.hours -
+                              usedHours("Medical leave", ["Approved"]),
+                          )}
+                          <span>days available</span>
+                        </div>
+                        <p className="stat-subtext">
+                          Here when you need to recover.
+                        </p>
+                        <div className="stat-footer">
+                          Annual allowance{" "}
+                          <span>
+                            {medical.rateDays} days ·{" "}
+                            {entitlements?.hospitalisation.rateDays ?? 60}{" "}
+                            hospitalisation days separately
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </>
               )}
@@ -974,7 +1165,12 @@ export default function Home() {
                         </td>
                         {view === "HR approvals" && (
                           <td>
-                            {request.status === "Pending" ? (
+                            {request.status === "Pending" &&
+                            request.employee_id === employee.id ? (
+                              <span className="reviewed">
+                                Another reviewer decides
+                              </span>
+                            ) : request.status === "Pending" ? (
                               <div className="decision-buttons">
                                 <button
                                   disabled={busy}
@@ -1015,7 +1211,10 @@ export default function Home() {
               <div className="requests-heading">
                 <div>
                   <h2>Employees</h2>
-                  <p>HR can add and edit employees. Admin manages all roles.</p>
+                  <p>
+                    HR can add Employee and HR profiles and edit Employee
+                    profiles. Admin manages all roles.
+                  </p>
                 </div>
               </div>
               <div className="table-scroll">
@@ -1026,6 +1225,9 @@ export default function Home() {
                       <th>Email</th>
                       <th>Join date</th>
                       <th>Role</th>
+                      <th>Employment</th>
+                      <th>Department</th>
+                      <th>Status</th>
                       <th>Action</th>
                     </tr>
                   </thead>
@@ -1036,6 +1238,25 @@ export default function Home() {
                         <td>{person.email}</td>
                         <td>{dateLabel(person.join_date)}</td>
                         <td>{person.role}</td>
+                        <td>
+                          {[
+                            person.employment_type,
+                            person.employee_level &&
+                              `Level ${person.employee_level}`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "Pending HR details"}
+                        </td>
+                        <td>
+                          {organisation.departments.find(
+                            (entry) => entry.id === person.department_id,
+                          )?.name ?? "—"}
+                        </td>
+                        <td>
+                          {person.is_active ? "Active" : "Inactive"}
+                          {person.must_change_password &&
+                            " · Temporary password"}
+                        </td>
                         <td>
                           <button
                             className="button secondary"
@@ -1060,12 +1281,41 @@ export default function Home() {
               </div>
             </section>
           )}
+          {view === "Employees" && canManageEmployees && (
+            <section className="requests-card">
+              <div className="requests-heading">
+                <div>
+                  <h2>Departments and cost centres</h2>
+                  <p>
+                    HR maintains these lists. Deactivate entries instead of
+                    deleting them so existing employee records stay intact.
+                  </p>
+                </div>
+              </div>
+              <div className="organisation-lists">
+                <OrganisationList
+                  title="Departments"
+                  noun="department"
+                  entries={organisation.departments}
+                  disabled={busy || !loaded}
+                  onSave={(body) => saveOrganisation("department", body)}
+                />
+                <OrganisationList
+                  title="Cost centres"
+                  noun="cost centre"
+                  entries={organisation.costCentres}
+                  disabled={busy || !loaded}
+                  onSave={(body) => saveOrganisation("costCentre", body)}
+                />
+              </div>
+            </section>
+          )}
           <footer className="page-footer">
             <span>
               People & co.{" "}
               <span> · A little less admin, a little more life.</span>
             </span>
-            <span>Local demo · Database storage · Login not yet enabled</span>
+            <span>Signed in as {employee.name}</span>
           </footer>
         </main>
       </div>
@@ -1093,8 +1343,9 @@ export default function Home() {
               </button>
             </div>
             <p className="modal-intro">
-              Create a profile now. Login credentials will be added with
-              authentication.
+              {employeeEditor.id
+                ? "Leave the temporary password blank to keep the current password."
+                : "Share the temporary password with the employee. They must change it when they first sign in."}
             </p>
             <form onSubmit={saveEmployee}>
               <label>
@@ -1135,15 +1386,124 @@ export default function Home() {
                     defaultValue={employeeEditor.role ?? "Employee"}
                   >
                     <option>Employee</option>
-                    {employee.role === "Admin" && (
-                      <>
-                        <option>HR</option>
-                        <option>Admin</option>
-                      </>
+                    {(employee.role === "Admin" || !employeeEditor.id) && (
+                      <option>HR</option>
                     )}
+                    {employee.role === "Admin" && <option>Admin</option>}
                   </select>
                 </label>
               </div>
+              <label>
+                Position
+                <input
+                  name="position"
+                  defaultValue={employeeEditor.position ?? ""}
+                  maxLength={100}
+                />
+              </label>
+              <div className="form-row">
+                <label>
+                  Employment type
+                  <select
+                    name="employment_type"
+                    defaultValue={employeeEditor.employment_type ?? ""}
+                  >
+                    <option value="">Not set</option>
+                    {employmentTypes.map((type) => (
+                      <option key={type}>{type}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Employee level
+                  <select
+                    name="employee_level"
+                    defaultValue={employeeEditor.employee_level ?? ""}
+                  >
+                    <option value="">Not set</option>
+                    {employeeLevels.map((level) => (
+                      <option key={level.value} value={level.value}>
+                        {level.value}. {level.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="form-row">
+                <label>
+                  Probation completed on
+                  <input
+                    name="probation_completed_on"
+                    type="date"
+                    defaultValue={employeeEditor.probation_completed_on ?? ""}
+                  />
+                </label>
+                <label>
+                  Leaving date
+                  <input
+                    name="leaving_date"
+                    type="date"
+                    defaultValue={employeeEditor.leaving_date ?? ""}
+                  />
+                </label>
+              </div>
+              <div className="form-row">
+                {(
+                  [
+                    ["Department", "department_id", organisation.departments],
+                    ["Cost centre", "cost_centre_id", organisation.costCentres],
+                  ] as const
+                ).map(([label, field, entries]) => (
+                  <label key={field}>
+                    {label}
+                    <select
+                      name={field}
+                      defaultValue={employeeEditor[field] ?? ""}
+                    >
+                      <option value="">Not set</option>
+                      {entries
+                        .filter(
+                          (entry) =>
+                            entry.is_active ||
+                            entry.id === employeeEditor[field],
+                        )
+                        .map((entry) => (
+                          <option key={entry.id} value={entry.id}>
+                            {entry.name}
+                            {entry.is_active ? "" : " (inactive)"}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+              {employeeEditor.id && (
+                <label className="checkbox-field">
+                  <input
+                    name="is_active"
+                    type="checkbox"
+                    defaultChecked={employeeEditor.is_active ?? true}
+                  />
+                  Active employee
+                </label>
+              )}
+              <p className="field-help">
+                Leave entitlements stay pending until HR sets the join date,
+                employment type and employee level.
+              </p>
+              <label>
+                {employeeEditor.id
+                  ? "Reset temporary password"
+                  : "Temporary password"}
+                <input
+                  name="temporary_password"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={passwordLength.min}
+                  maxLength={passwordLength.max}
+                  required={!employeeEditor.id}
+                />
+              </label>
               {error && (
                 <p className="form-error" role="alert">
                   {error}

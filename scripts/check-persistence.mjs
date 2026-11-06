@@ -1,17 +1,20 @@
 import assert from "node:assert/strict";
 import nextEnv from "@next/env";
 import pg from "pg";
+import { baseUrl, demoSessions } from "./sessions.mjs";
 nextEnv.loadEnvConfig(process.cwd());
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
 const marker = `Persistence check ${Date.now()}`;
 let id;
+let sessions = {};
+const headers = (role) => ({
+  "Content-Type": "application/json",
+  Cookie: sessions[role],
+});
 async function api(method, body) {
-  const response = await fetch("http://localhost:3000/api/workspace", {
+  const response = await fetch(`${baseUrl}/api/workspace`, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      "x-demo-role": method === "PATCH" ? "HR" : "Employee",
-    },
+    headers: headers(method === "PATCH" ? "HR" : "Employee"),
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const data = await response.json();
@@ -20,6 +23,7 @@ async function api(method, body) {
 }
 try {
   await client.connect();
+  sessions = await demoSessions();
   const before = await api("GET");
   const date = "2026-12-29";
   assert.ok(
@@ -56,17 +60,17 @@ try {
   const refreshed = await api("GET");
   assert.equal(refreshed.requests.find((r) => r.id === id).status, "Approved");
   assert.equal(Number(refreshed.worked[date]), 5.5);
-  const invalid = await fetch("http://localhost:3000/api/workspace", {
+  const invalid = await fetch(`${baseUrl}/api/workspace`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: headers("Employee"),
     body: JSON.stringify({ month: "2026-12", worked: { [date]: "8" } }),
   });
   assert.equal(invalid.status, 400);
   const again = await api("GET");
   assert.equal(Number(again.worked[date]), 5.5);
-  const duplicate = await fetch("http://localhost:3000/api/workspace", {
+  const duplicate = await fetch(`${baseUrl}/api/workspace`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", "x-demo-role": "HR" },
+    headers: headers("HR"),
     body: JSON.stringify({ id, status: "Approved" }),
   });
   assert.equal(duplicate.status, 400);

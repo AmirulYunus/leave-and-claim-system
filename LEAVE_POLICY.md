@@ -4,6 +4,28 @@ Recorded on 5 October 2026. This records the user's company policy and the offic
 
 ## Confirmed company decisions
 
+### Next.js application scope — 6 November 2026
+
+- The Power Apps/Dataverse solution is live in production and is no longer
+  maintained from this repository. Treat `scripts/dataverse/` as a read-only
+  record of the leave requirements; do not deploy, extend or test against
+  Dataverse.
+- The Next.js application must implement the leave requirements defined for
+  Dataverse, adapted to the decisions below. Where an earlier section names a
+  Superior, Entra identity, Power Automate flow or Dataverse role, apply the
+  rule to the Next.js roles instead.
+- The roles are Employee, HR and Admin. Admin is the developer superuser.
+  There is no Superior role: HR approves or rejects leave and claim requests,
+  and each decision emails both the employee and HR. The existing
+  self-approval prohibition still applies.
+- Admin creates HR accounts. HR can create HR and Employee accounts. This
+  supersedes the 10 October IT-provisioning decision for the Next.js
+  application.
+- Users sign in with an email address and password.
+- Supporting documents are stored on local disk in development and in an S3
+  bucket in staging and production.
+- Claims and timesheets remain part of the Next.js application.
+
 ### Remaining leave types and December request timing — 25 October 2026
 
 - Confirmed 26 October 2026: employees may choose Unpaid Leave even if paid

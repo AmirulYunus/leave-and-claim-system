@@ -1,12 +1,88 @@
 import { hasPermission } from "../../lib/permissions";
 import { database } from "../../lib/prisma";
-import { checkDevelopmentAccess, demoEmail } from "../../lib/demo-access";
+import { authenticate } from "../../lib/auth";
+import { hashPassword } from "../../lib/password";
+import { passwordProblem } from "../../lib/password-rules";
+import { endOtherSessions } from "../../lib/session";
 import { datesBetween } from "../../lib/time";
+import {
+  newEmploymentDetails,
+  parseEmploymentDetails,
+  type EmploymentDetails,
+} from "../../lib/employment";
 import { Prisma } from "../../generated/prisma/client";
 
 export const runtime = "nodejs";
 
 class ValidationError extends Error {}
+
+const isoDate = (date: Date | null) =>
+  date ? date.toISOString().slice(0, 10) : null;
+const dbDate = (date: string | null) =>
+  date ? new Date(`${date}T00:00:00Z`) : null;
+
+function storedDetails(employee: {
+  position: string | null;
+  employment_type: string | null;
+  employee_level: number | null;
+  probation_completed_on: Date | null;
+  leaving_date: Date | null;
+  is_active: boolean;
+  department_id: number | null;
+  cost_centre_id: number | null;
+}): EmploymentDetails {
+  return {
+    position: employee.position,
+    employment_type: employee.employment_type,
+    employee_level: employee.employee_level,
+    probation_completed_on: isoDate(employee.probation_completed_on),
+    leaving_date: isoDate(employee.leaving_date),
+    is_active: employee.is_active,
+    department_id: employee.department_id,
+    cost_centre_id: employee.cost_centre_id,
+  };
+}
+
+function employmentData(details: EmploymentDetails) {
+  return {
+    ...details,
+    probation_completed_on: dbDate(details.probation_completed_on),
+    leaving_date: dbDate(details.leaving_date),
+  };
+}
+
+function employmentDetails(
+  input: Record<string, unknown>,
+  joinDate: string,
+  current: EmploymentDetails,
+) {
+  const details = parseEmploymentDetails(input, joinDate, current);
+  if (typeof details === "string") throw new ValidationError(details);
+  return details;
+}
+
+// Newly chosen classifications must be active; an unchanged one may since have
+// been deactivated and is kept.
+async function checkClassification(
+  tx: Prisma.TransactionClient,
+  next: EmploymentDetails,
+  current: EmploymentDetails,
+) {
+  if (next.department_id && next.department_id !== current.department_id) {
+    const entry = await tx.departments.findUnique({
+      where: { id: next.department_id },
+    });
+    if (!entry?.is_active)
+      throw new ValidationError("Choose an active department.");
+  }
+  if (next.cost_centre_id && next.cost_centre_id !== current.cost_centre_id) {
+    const entry = await tx.cost_centres.findUnique({
+      where: { id: next.cost_centre_id },
+    });
+    if (!entry?.is_active)
+      throw new ValidationError("Choose an active cost centre.");
+  }
+}
 
 function failure(error: unknown) {
   if (error instanceof ValidationError)
@@ -33,31 +109,35 @@ function failure(error: unknown) {
   );
 }
 
+const forbidden = () =>
+  Response.json({ error: "Forbidden", message: "Forbidden" }, { status: 403 });
+
+// An optional temporary password; the employee must change it at sign-in.
+async function temporaryPassword(value: unknown) {
+  if (value === undefined || value === "") return null;
+  const problem = passwordProblem(value);
+  if (problem) throw new ValidationError(`Temporary password: ${problem}`);
+  return hashPassword(value as string);
+}
+
 export async function GET(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
-    const actor = await database().employees.findUnique({
-      where: { email: demoEmail(request) },
-    });
-    if (!actor)
-      return Response.json(
-        { error: "Forbidden", message: "Forbidden" },
-        { status: 403 },
-      );
-    if (!(await hasPermission(actor.id, "user.view")))
-      return Response.json(
-        { error: "Forbidden", message: "Forbidden" },
-        { status: 403 },
-      );
+    const actor = await authenticate(request);
+    if (actor instanceof Response) return actor;
+    if (!(await hasPermission(actor.id, "user.view"))) return forbidden();
     const employees = await database().employees.findMany({
       orderBy: [{ name: "asc" }, { id: "asc" }],
     });
     return Response.json(
       {
         employees: employees.map((employee) => ({
-          ...employee,
-          join_date: employee.join_date.toISOString().slice(0, 10),
+          id: employee.id,
+          name: employee.name,
+          email: employee.email,
+          role: employee.role,
+          join_date: isoDate(employee.join_date),
+          must_change_password: employee.must_change_password,
+          ...storedDetails(employee),
         })),
       },
       { headers: { "Cache-Control": "no-store" } },
@@ -67,11 +147,11 @@ export async function GET(request: Request) {
   }
 }
 
-// HR can create Employee profiles. Admin can also create HR and Admin profiles.
+// HR can create Employee and HR profiles. Only Admin can create Admin profiles.
 export async function POST(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
+    const actor = await authenticate(request);
+    if (actor instanceof Response) return actor;
     const input = await request.json();
     const name = typeof input.name === "string" ? input.name.trim() : "";
     const email =
@@ -91,32 +171,36 @@ export async function POST(request: Request) {
       throw new ValidationError("Enter a valid join date.");
     if (!["Employee", "HR", "Admin"].includes(role))
       throw new ValidationError("Invalid role.");
+    const details = employmentDetails(
+      input,
+      input.join_date,
+      newEmploymentDetails,
+    );
+    const password_hash = await temporaryPassword(input.temporary_password);
+    if (!password_hash)
+      throw new ValidationError("Set a temporary password for the account.");
     const denied = await database().$transaction(async (tx) => {
-      const actor = await tx.employees.findUnique({
-        where: { email: demoEmail(request) },
-      });
-      if (!actor)
-        return Response.json(
-          { error: "Forbidden", message: "Forbidden" },
-          { status: 403 },
-        );
       if (!(await hasPermission(actor.id, "user.create", tx)))
-        return Response.json(
-          { error: "Forbidden", message: "Forbidden" },
-          { status: 403 },
-        );
+        return forbidden();
       if (role !== "Employee")
-        if (!(await hasPermission(actor.id, "user.assignRole", tx)))
-          return Response.json(
-            { error: "Forbidden", message: "Forbidden" },
-            { status: 403 },
-          );
+        if (
+          !(await hasPermission(
+            actor.id,
+            role === "HR" ? "user.createHr" : "user.assignRole",
+            tx,
+          ))
+        )
+          return forbidden();
+      await checkClassification(tx, details, newEmploymentDetails);
       await tx.employees.create({
         data: {
           name,
           email,
           role,
           join_date: new Date(`${input.join_date}T00:00:00Z`),
+          ...employmentData(details),
+          password_hash,
+          must_change_password: true,
         },
       });
     });
@@ -128,10 +212,11 @@ export async function POST(request: Request) {
 }
 
 // Edit employee details; only Admin can change roles or edit privileged profiles.
+// Resetting the temporary password or deactivating signs the employee out.
 export async function PATCH(request: Request) {
-  const blocked = checkDevelopmentAccess(request);
-  if (blocked) return blocked;
   try {
+    const actor = await authenticate(request);
+    if (actor instanceof Response) return actor;
     const input = await request.json();
     if (!Number.isSafeInteger(input.id))
       throw new ValidationError("Invalid employee.");
@@ -145,52 +230,48 @@ export async function PATCH(request: Request) {
       throw new ValidationError("Enter a name and valid join date.");
     if (!["Employee", "HR", "Admin"].includes(input.role))
       throw new ValidationError("Invalid role.");
-    const denied = await database().$transaction(async (tx) => {
-      // Serialize role edits so two changes cannot remove the last Admin.
+    const password_hash = await temporaryPassword(input.temporary_password);
+    const result = await database().$transaction(async (tx) => {
+      // Serialize edits so two changes cannot remove the last active Admin.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(-1::integer)`;
-      const actor = await tx.employees.findUnique({
-        where: { email: demoEmail(request) },
-      });
       const target = await tx.employees.findUnique({ where: { id: input.id } });
-      if (!actor)
-        return Response.json(
-          { error: "Forbidden", message: "Forbidden" },
-          { status: 403 },
-        );
       if (!(await hasPermission(actor.id, "user.update", tx)))
-        return Response.json(
-          { error: "Forbidden", message: "Forbidden" },
-          { status: 403 },
-        );
+        return forbidden();
       if (!target) throw new ValidationError("Employee not found.");
       if (target.role !== "Employee")
         if (!(await hasPermission(actor.id, "user.updatePrivileged", tx)))
-          return Response.json(
-            { error: "Forbidden", message: "Forbidden" },
-            { status: 403 },
-          );
+          return forbidden();
       if (input.role !== target.role)
         if (!(await hasPermission(actor.id, "user.assignRole", tx)))
-          return Response.json(
-            { error: "Forbidden", message: "Forbidden" },
-            { status: 403 },
-          );
+          return forbidden();
+      const current = storedDetails(target);
+      const details = employmentDetails(input, input.join_date, current);
       if (
         target.role === "Admin" &&
-        input.role !== "Admin" &&
-        (await tx.employees.count({ where: { role: "Admin" } })) <= 1
+        target.is_active &&
+        (input.role !== "Admin" || !details.is_active) &&
+        (await tx.employees.count({
+          where: { role: "Admin", is_active: true },
+        })) <= 1
       )
-        throw new ValidationError("Keep at least one Admin account.");
+        throw new ValidationError("Keep at least one active Admin account.");
+      await checkClassification(tx, details, current);
       await tx.employees.update({
         where: { id: input.id },
         data: {
           name,
           join_date: new Date(`${input.join_date}T00:00:00Z`),
           role: input.role,
+          ...employmentData(details),
+          ...(password_hash
+            ? { password_hash, must_change_password: true }
+            : {}),
         },
       });
+      return { signOut: Boolean(password_hash) || !details.is_active };
     });
-    if (denied) return denied;
+    if (result instanceof Response) return result;
+    if (result.signOut) await endOtherSessions(input.id);
     return Response.json({ saved: true });
   } catch (error) {
     return failure(error);

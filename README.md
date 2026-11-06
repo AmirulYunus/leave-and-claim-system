@@ -1,11 +1,11 @@
 # Leave and claim workspace
 
-Next.js employee dashboard with hourly leave, expense claims, HR review, and monthly timesheets backed by PostgreSQL and Prisma 7.
+Next.js employee dashboard with leave entitlements, expense claims, HR review, and monthly timesheets backed by PostgreSQL and Prisma 7.
 
 ## Local setup
 
 1. Open Docker Desktop, then run `docker compose up -d` in this directory.
-2. Create `.env.local` with `DATABASE_URL=postgresql://leave_app:YOUR_URL_ENCODED_PASSWORD@localhost:5432/leave_and_claim`. Use the credentials configured in Compose. Keep real environment files out of Git.
+2. Create `.env.local` with `DATABASE_URL=postgresql://leave_app:YOUR_URL_ENCODED_PASSWORD@localhost:5432/leave_and_claim` and `SEED_PASSWORD=<12-128 characters>`. Use the credentials configured in Compose. Keep real environment files out of Git.
 3. Run:
 
 ```bash
@@ -18,17 +18,26 @@ npm run dev -- --hostname 127.0.0.1
 
 Open http://localhost:3000. Prisma migrations are tracked in `_prisma_migrations`; rerunning `db:deploy` applies only pending migrations. Seeding creates fictional employee profiles if absent and never resets existing data. No sample requests are inserted automatically.
 
-`npm run db:seed` runs `prisma/seed.ts` using Prisma and creates the local preview identities Amirul, HR, System Admin, Sarah Tan, and Daniel Lee using `example.test` emails. Their join dates are demo values.
+`npm run db:seed` runs `prisma/seed.ts` using Prisma and creates the local demo accounts Amirul (`amirul@example.test`, Employee), HR (`hr@example.test`), System Admin (`admin@example.test`), Sarah Tan, and Daniel Lee. Accounts without a password get `SEED_PASSWORD`; existing passwords are never changed. Their join dates are demo values.
+
+## Sign-in
+
+Users sign in with their email address and password. Sessions last 12 hours and are stored in the `sessions` table; the browser holds only a random token in an `httpOnly`, `SameSite=Lax` cookie, and the database stores its SHA-256 digest. Passwords are hashed with scrypt and must be 12–128 characters.
+
+When HR or Admin creates an account they set a temporary password and share it with the employee, who must choose a new password at first sign-in before using the app. Resetting the temporary password or deactivating an employee signs them out everywhere.
 
 ## Roles and employee management
 
-Select **HR** or **Admin**, then open **Employees** to add a profile with name, email, and join date. HR creates only Employee profiles and edits ordinary employee records. Admin can assign Employee, HR, or Admin roles. Existing profile emails are read-only. At least one Admin must remain.
+Sign in as HR or Admin, then open **Employees** to add a profile with name, email, join date, and temporary password. HR creates Employee and HR profiles and edits ordinary employee records. Admin creates Admin profiles and assigns Employee, HR, or Admin roles. Existing profile emails are read-only. At least one active Admin must remain.
+
+HR also maintains each profile's employment details: position, employment type, employee level (1–4), probation completion date, leaving date, active status, department and cost centre. They are blank until HR supplies them, and leave entitlement rules will treat a blank input as pending HR details rather than zero. Departments and cost centres are maintained on the Employees page; deactivate entries instead of deleting them.
 
 The `20261006000200_split_roles` migration changes the old combined role to HR and permits three distinct roles. Apply it with `npm run db:migrate`, then run `npm run db:seed` to create the separate Admin preview profile. No reset is required.
 
 ## Stored data
 
-- `employees`: profiles, join dates, and roles.
+- `employees`: profiles, join dates, roles, and HR-maintained employment details.
+- `departments`, `cost_centres`: HR-maintained classification lists.
 - `requests`: leave/claim requests and HR decision history fields.
 - `leave_entries`: requested hours for each date.
 - `claims`: reimbursement amounts.
@@ -38,9 +47,17 @@ Leave and claim submissions and HR decisions save immediately. Timesheet edits a
 
 ## Development boundary
 
-Login is not implemented. The role dropdown selects a local preview identity (Employee, HR, or Admin). API handlers check that identity’s database role: Employee sees their own requests; HR reviews requests and creates/edits Employee profiles; Admin can also create privileged profiles and change roles. These are preview permission checks, not authenticated access control. Employee profiles do not have login credentials yet. The API rejects production requests and non-localhost access. Do not use this preview with real HR data or deploy it as a live employee system. Proper sessions, authenticated identities, and role authorization must replace the demo identities before deployment.
+Every API handler requires a signed-in session and checks the employee's current database role: Employee sees their own requests; HR reviews requests and maintains Employee and HR profiles; Admin can also create Admin profiles and change roles. Cross-origin requests are rejected. Before staging or production, add sign-in rate limiting and serve the app over HTTPS so the session cookie is marked `Secure`.
 
-Leave balances currently cover the 2026 preview period. Company holidays, accrual/carry-forward, medical document uploads, maternity/paternity workflows, and payroll/overtime calculations are pending. See LEAVE_POLICY.md for confirmed policy and unresolved decisions.
+## Leave entitlements
+
+`app/lib/entitlement.ts` implements the entitlement rules carried over from the Dataverse solution; `tests/entitlement.test.mjs` contains the original test cases. Balances run per calendar year in Malaysia time, and new requests must fall in the current year.
+
+- **Annual leave:** a full-year rate of the employee-level base (14/14/15/18 days for levels 1–4) plus a service reward (+1 day from 2 completed years, +2 from 4, +3 from 6), never below the statutory minimum (8/12/16 days). It is earned monthly: each completed calendar month adds its rate, the joining month counts once it ends, and the running total is rounded up once to the next half day. Only leave earned by today can be used, including for future dates.
+- **Medical leave:** 14/18/22 days for under 2, 2–5 and 5 or more completed years. **Hospitalisation leave:** a separate 60 days.
+- **Held, not zero:** missing HR details, part-time and intern staff, 8 or more years' service, a 29 February join date and the leaving year show a pending reason and block that category until resolved. Unpaid leave has no limit.
+
+Carry-forward, public holidays, supporting documents, cancellation and the remaining leave types are pending. See LEAVE_POLICY.md for confirmed policy and unresolved decisions.
 
 Database credentials stay on the server; DATABASE_URL must never use a NEXT_PUBLIC_ prefix. The Docker volume preserves records across container stops; removing its volume deletes them.
 
@@ -52,7 +69,7 @@ npx tsc --noEmit
 npm test
 ```
 
-With the dev server and local database running, `node scripts/check-persistence.mjs` checks a temporary 2.5-hour leave request, HR approval, persisted worked hours, and conflict rejection. It removes only its temporary records afterward. Its reserved test date (29 December 2026) must be unused. `node scripts/check-roles.mjs` verifies employee creation, editing, role restrictions, and request isolation, then removes its temporary profiles.
+With the dev server and local database running, `node scripts/check-persistence.mjs` checks a temporary 2.5-hour leave request, HR approval, persisted worked hours, and conflict rejection. It removes only its temporary records afterward. Its reserved test date (29 December 2026) must be unused. `node scripts/check-roles.mjs` verifies sign-in, employee creation, editing, role restrictions, and request isolation, then removes its temporary profiles. `node scripts/check-entitlements.mjs` verifies the entitlement summary and that missing HR details block entitled leave. The scripts sign in with `SEED_PASSWORD`.
 
 ## Prisma schema changes
 

@@ -10,17 +10,21 @@ test("employees cannot review requests or manage accounts", () => {
     "leave.approve",
     "claim.approve",
     "user.create",
+    "user.createHr",
+    "organisation.manage",
     "request.viewAll",
   ])
     assert.equal(roleHasPermission("Employee", permission), false);
   assert.equal(roleHasPermission("Employee", "leave.create"), true);
 });
-test("HR can review and create employees but cannot assign privileged roles", () => {
+test("HR can review and create Employee and HR profiles but cannot assign roles", () => {
   for (const permission of [
     "leave.approve",
     "claim.approve",
     "user.create",
+    "user.createHr",
     "user.update",
+    "organisation.manage",
   ])
     assert.equal(roleHasPermission("HR", permission), true);
   for (const permission of ["user.assignRole", "user.updatePrivileged"])

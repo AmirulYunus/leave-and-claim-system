@@ -47,6 +47,35 @@ type Entitlements = {
   annual: Allowance;
   medical: Allowance;
   hospitalisation: Allowance;
+  carryForward: {
+    hours: number;
+    remaining: number;
+    used: number;
+    useBy: string;
+  };
+};
+type CarryForwardRow = {
+  employee_id: number;
+  name: string;
+  draft: {
+    unusedHours: number;
+    limit: number;
+    carry: number;
+    remainder: number;
+  };
+  exception: { limit_hours: number; document_reference: string } | null;
+  confirmed: {
+    carry_hours: number;
+    unused_hours: number;
+    reason: string | null;
+  } | null;
+};
+type CarryForwardView = {
+  sourceYear: number;
+  provisional: boolean;
+  canRecordException: boolean;
+  canConfirm: boolean;
+  rows: CarryForwardRow[];
 };
 const allowanceKeys: Record<string, keyof Entitlements> = {
   "Annual leave": "annual",
@@ -245,6 +274,9 @@ export default function Home() {
     departments: [],
     costCentres: [],
   });
+  const [carryForward, setCarryForward] = useState<CarryForwardView | null>(
+    null,
+  );
   const [employeeEditor, setEmployeeEditor] =
     useState<Partial<Employee> | null>(null);
   const canManageEmployees = loaded && ["HR", "Admin"].includes(employee.role);
@@ -305,7 +337,10 @@ export default function Home() {
     return key ? (entitlements?.[key] as Allowance | undefined) : undefined;
   };
   const annual = entitlements?.annual;
-  const annualUsed = usedHours("Annual leave", ["Approved"]);
+  // Earned annual hours used; hours funded by carry-forward are counted there.
+  const carried = entitlements?.carryForward;
+  const annualUsed =
+    usedHours("Annual leave", ["Approved"]) - (carried?.used ?? 0);
   const annualAvailable =
     annual?.hours == null ? null : annual.hours - annualUsed;
   const medical = entitlements?.medical;
@@ -481,7 +516,17 @@ export default function Home() {
         entries,
         existing,
         balance && allowance?.hours != null
-          ? allowance.hours - usedHours(balance, ["Pending", "Approved"])
+          ? allowance.hours -
+              usedHours(balance, ["Pending", "Approved"]) +
+              (balance === "Annual leave" && carried
+                ? carried.used +
+                  Math.min(
+                    carried.remaining,
+                    entries
+                      .filter((entry) => entry.date <= carried.useBy)
+                      .reduce((sum, entry) => sum + entry.hours, 0),
+                  )
+                : 0)
           : Infinity,
       );
       if (validation) {
@@ -643,8 +688,8 @@ export default function Home() {
     }
   }
   async function loadEmployees() {
-    const [people, lists] = await Promise.all(
-      ["/api/employees", "/api/organisation"].map((url) =>
+    const [people, lists, carry] = await Promise.all(
+      ["/api/employees", "/api/organisation", "/api/carry-forward"].map((url) =>
         fetch(url, { cache: "no-store" }),
       ),
     );
@@ -652,8 +697,73 @@ export default function Home() {
     if (!people.ok) throw new Error(data.error);
     const listData = await lists.json();
     if (!lists.ok) throw new Error(listData.error);
+    const carryData = await carry.json();
+    if (!carry.ok) throw new Error(carryData.error);
     setEmployees(data.employees);
     setOrganisation(listData);
+    setCarryForward(carryData);
+  }
+  async function saveCarryForward(
+    row: CarryForwardRow,
+    action: "exception" | "confirm",
+  ) {
+    if (busy || !carryForward) return;
+    const body: Record<string, unknown> = {
+      action,
+      employee_id: row.employee_id,
+      source_year: carryForward.sourceYear,
+    };
+    if (action === "exception") {
+      const limitDays = Number(
+        window.prompt(
+          `Written approval for ${row.name}: the higher carry-forward limit in days (more than 5, in half days).`,
+        ),
+      );
+      if (!limitDays) return;
+      body.limit_hours = limitDays * 8;
+      body.document_reference = window.prompt(
+        "Reference of the written approval document:",
+      );
+      if (!body.document_reference) return;
+    } else {
+      const answer = window.prompt(
+        `Carry forward how many days for ${row.name}? Calculated: ${days(row.draft.carry)} days. You may only reduce it.`,
+        String(days(row.draft.carry)),
+      );
+      if (answer === null) return;
+      body.carry_hours = Math.round(Number(answer) * 8);
+      if (body.carry_hours !== row.draft.carry) {
+        body.reason = window.prompt("Reason for reducing the carry-forward:");
+        body.document_reference = window.prompt(
+          "Reference of the supporting document:",
+        );
+        if (!body.reason || !body.document_reference) return;
+      }
+    }
+    setBusy(true);
+    try {
+      const response = await fetch("/api/carry-forward", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      await loadEmployees();
+      setMessage(
+        action === "exception"
+          ? "Written carry-forward exception recorded."
+          : "Carry-forward confirmed.",
+      );
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error
+          ? error.message
+          : "Could not save carry-forward.",
+      );
+    } finally {
+      setBusy(false);
+    }
   }
   async function saveOrganisation(
     type: "department" | "costCentre",
@@ -959,6 +1069,12 @@ export default function Home() {
                             {annual.rateDays} days a year, earned monthly
                           </span>
                         </div>
+                        {carried && carried.remaining > 0 && (
+                          <p className="stat-subtext">
+                            Plus {days(carried.remaining)} carried-forward days
+                            to use by {dateLabel(carried.useBy)}.
+                          </p>
+                        )}
                       </>
                     )}
                   </div>
@@ -1535,6 +1651,81 @@ export default function Home() {
                           >
                             Edit
                           </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+          {view === "Employees" && canManageEmployees && carryForward && (
+            <section className="requests-card">
+              <div className="requests-heading">
+                <div>
+                  <h2>
+                    Annual Leave carry-forward from {carryForward.sourceYear}
+                  </h2>
+                  <p>
+                    {carryForward.provisional
+                      ? "A running estimate. Record written approvals for a higher limit from 1 October to 15 December; confirm from 1 January to 31 March."
+                      : "Confirm each employee's carry-forward by 31 March. Carried days are spent first on leave dated up to 31 March; the rest of the unused leave is recorded, not added."}
+                  </p>
+                </div>
+              </div>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Employee</th>
+                      <th>Unused</th>
+                      <th>Limit</th>
+                      <th>Carry forward</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {carryForward.rows.map((row) => (
+                      <tr key={row.employee_id}>
+                        <td>{row.name}</td>
+                        <td>{days(row.draft.unusedHours)} days</td>
+                        <td>
+                          {days(row.draft.limit)} days
+                          {row.exception && (
+                            <small className="request-note">
+                              Written approval:{" "}
+                              {row.exception.document_reference}
+                            </small>
+                          )}
+                        </td>
+                        <td>
+                          {days(row.confirmed?.carry_hours ?? row.draft.carry)}{" "}
+                          days
+                        </td>
+                        <td>{row.confirmed ? "Confirmed" : "Not confirmed"}</td>
+                        <td>
+                          {carryForward.canConfirm && !row.confirmed && (
+                            <button
+                              className="request-action"
+                              disabled={busy}
+                              onClick={() => saveCarryForward(row, "confirm")}
+                            >
+                              Confirm
+                            </button>
+                          )}
+                          {carryForward.canRecordException &&
+                            !row.exception && (
+                              <button
+                                className="request-action"
+                                disabled={busy}
+                                onClick={() =>
+                                  saveCarryForward(row, "exception")
+                                }
+                              >
+                                Record written approval
+                              </button>
+                            )}
                         </td>
                       </tr>
                     ))}

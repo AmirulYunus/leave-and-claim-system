@@ -17,6 +17,14 @@ import {
   submissionProblem,
   type LeaveDetails,
 } from "../../lib/leave-types";
+import {
+  approvedAnnualUse,
+  closedYearProblem,
+  confirmedCarryForward,
+  employmentOf,
+  unusedAnnualHours,
+} from "../../lib/annual-ledger";
+import { carryAllocation, carryUseBy } from "../../lib/carry-forward";
 import type { Prisma } from "../../generated/prisma/client";
 export const runtime = "nodejs";
 
@@ -47,18 +55,10 @@ function getEmployeeProfile(tx: Transaction, id: number) {
 }
 type EmployeeRow = Awaited<ReturnType<typeof getEmployeeProfile>>;
 
-function employment(employee: EmployeeRow) {
-  return {
-    join_date: isoDate(employee.join_date),
-    employee_level: employee.employee_level,
-    employment_type: employee.employment_type,
-    is_active: employee.is_active,
-    leaving_date: employee.leaving_date ? isoDate(employee.leaving_date) : null,
-  };
-}
+const employment = employmentOf;
 
 // This year's usable hours per entitled category, for the dashboard.
-function entitlementSummary(employee: EmployeeRow) {
+async function entitlementSummary(tx: Transaction, employee: EmployeeRow) {
   const today = malaysiaDate();
   const year = Number(today.slice(0, 4));
   const details = employment(employee);
@@ -71,6 +71,9 @@ function entitlementSummary(employee: EmployeeRow) {
       rateDays,
     };
   };
+  const credit = await confirmedCarryForward(tx, employee.id, year - 1);
+  const use = await approvedAnnualUse(tx, employee.id, year);
+  const useBy = carryUseBy(year);
   return {
     year,
     asOf: today,
@@ -80,6 +83,16 @@ function entitlementSummary(employee: EmployeeRow) {
       "Hospitalisation leave",
       rates.hospitalisation.days,
     ),
+    // Carry-forward from last year, usable for dates up to 31 March.
+    carryForward: {
+      hours: credit?.carry_hours ?? 0,
+      remaining:
+        today <= useBy
+          ? Math.max(0, (credit?.carry_hours ?? 0) - use.carry)
+          : 0,
+      used: use.carry,
+      useBy,
+    },
   };
 }
 async function getLeaveRecords(
@@ -227,7 +240,12 @@ async function validateLeaveEntries(
   const balance = balanceCategory(category, details.training_category);
   const records = await getLeaveRecords(tx, employee.id, excludeId);
   let available = Infinity;
+  let carryHours = 0;
   if (balance) {
+    if (!submitting && balance === "Annual leave") {
+      const closed = await closedYearProblem(tx, employee.id, year);
+      if (closed) throw new ValidationError(closed);
+    }
     const allowance = leaveAllowanceHours(
       employment(employee),
       balance,
@@ -238,14 +256,42 @@ async function validateLeaveEntries(
       throw new ValidationError(
         `${category} is unavailable: ${allowance.reason}`,
       );
+    // An approval counts approved leave only; a new request also reserves the
+    // employee's pending requests.
+    const inYear = records.filter(
+      (record) =>
+        record.balance === balance && record.date.startsWith(`${year}-`),
+    );
+    const counted = submitting
+      ? inYear
+      : inYear.filter((record) => record.status === "Approved");
     available =
-      allowance.hours -
-      records
-        .filter(
-          (record) =>
-            record.balance === balance && record.date.startsWith(`${year}-`),
-        )
-        .reduce((sum, record) => sum + record.hours, 0);
+      allowance.hours - counted.reduce((sum, record) => sum + record.hours, 0);
+    if (balance === "Annual leave") {
+      const useBy = carryUseBy(year);
+      const credit = await confirmedCarryForward(tx, employee.id, year - 1);
+      // Wait for HR's carry-forward decision while it can still be made
+      // (until 31 March); afterwards the leave is paid from earned leave.
+      if (
+        !submitting &&
+        !credit &&
+        today <= useBy &&
+        entries.some((entry) => entry.date <= useBy) &&
+        (await unusedAnnualHours(tx, employee, year - 1, today)) > 0
+      )
+        throw new ValidationError(
+          `HR must confirm the ${year - 1} Annual Leave carry-forward before January–March ${year} Annual Leave can be approved.`,
+        );
+      // Carry-forward is spent first on dates up to 31 March.
+      const use = await approvedAnnualUse(tx, employee.id, year, excludeId);
+      const remaining = (credit?.carry_hours ?? 0) - use.carry;
+      const pending = submitting
+        ? inYear.filter((record) => record.status === "Pending")
+        : [];
+      carryHours = carryAllocation(entries, remaining, useBy);
+      available +=
+        use.carry + carryAllocation([...pending, ...entries], remaining, useBy);
+    }
   }
   const error = validateLeave(entries, records, available);
   if (error) throw new ValidationError(error);
@@ -268,6 +314,7 @@ async function validateLeaveEntries(
     throw new ValidationError(
       "Worked hours plus requested leave exceed 8 hours. Update the timesheet first.",
     );
+  return { carryHours };
 }
 
 // Load the requests and worked hours displayed in the workspace.
@@ -312,7 +359,7 @@ export async function GET(request: Request) {
             role: employee.role,
             join_date: isoDate(employee.join_date),
           },
-          entitlements: entitlementSummary(employee),
+          entitlements: await entitlementSummary(tx, employee),
           worked: Object.fromEntries(
             times.map((day) => [isoDate(day.date), day.hours.toString()]),
           ),
@@ -515,6 +562,7 @@ export async function PATCH(request: Request) {
         !details.birth_on
       )
         details.birth_on = optionalDate(input.birth_on);
+      let carryHours = 0;
       if (target.kind === "Leave" && input.status === "Approved") {
         const entries = target.leave_entries.map((entry) => ({
           date: isoDate(entry.date),
@@ -562,7 +610,7 @@ export async function PATCH(request: Request) {
           priorMarriages,
         });
         if (problem) throw new ValidationError(problem);
-        await validateLeaveEntries(
+        ({ carryHours } = await validateLeaveEntries(
           tx,
           target.employee,
           target.category,
@@ -573,7 +621,7 @@ export async function PATCH(request: Request) {
             submitting: false,
             submittedAt: target.created_at,
           },
-        );
+        ));
       }
       await tx.requests.update({
         where: { id: input.id },
@@ -581,6 +629,7 @@ export async function PATCH(request: Request) {
           status: input.status,
           reviewed_by: reviewer.id,
           reviewed_at: new Date(),
+          carry_forward_hours: carryHours,
           ...(details.birth_on && !target.birth_on
             ? { birth_on: dbDate(details.birth_on) }
             : {}),

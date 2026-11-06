@@ -2,6 +2,8 @@ import { authenticate } from "../../lib/auth";
 import { hasPermission } from "../../lib/permissions";
 import { database } from "../../lib/prisma";
 import { malaysiaDate } from "../../lib/entitlement";
+import { closedYearProblem } from "../../lib/annual-ledger";
+import { balanceCategory } from "../../lib/leave-types";
 import {
   cancellationDecisionProblem,
   cancellationKind,
@@ -128,6 +130,18 @@ export async function PATCH(request: Request) {
       if (approving) {
         if (cancellation.request.status !== "Approved")
           throw new Refusal("Only approved leave can be cancelled.");
+        const leave = cancellation.request;
+        if (
+          balanceCategory(leave.category, leave.training_category) ===
+          "Annual leave"
+        ) {
+          const closed = await closedYearProblem(
+            tx,
+            leave.employee_id,
+            leave.leave_entries[0].date.getUTCFullYear(),
+          );
+          if (closed) throw new Refusal(closed);
+        }
         await tx.requests.update({
           where: { id: cancellation.request_id },
           data: { status: "Cancelled" },

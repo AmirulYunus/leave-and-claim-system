@@ -129,6 +129,26 @@ export function submissionProblem(category: string, details: LeaveDetails) {
   return "";
 }
 
+// Medical leave must be submitted within 48 hours of its start date, measured
+// from midnight Malaysia time (16:00 UTC the day before) on that date.
+export function medicalSubmissionProblem(start: string, now: Date) {
+  const deadline = Date.parse(`${addDays(start, 2)}T00:00:00+08:00`);
+  return now.getTime() <= deadline
+    ? ""
+    : "Submit Medical leave within 48 hours of the start date, measured from 12:00 AM Malaysia time on that date.";
+}
+
+// Categories HR cannot approve until a document is attached; HR must still
+// check that the document is valid.
+const evidenceRequired: Record<string, string> = {
+  "Medical leave":
+    "Upload a medical certificate before Medical leave can be approved. HR must verify the certificate.",
+  "Hospitalisation leave":
+    "Upload a medical certificate before Hospitalisation leave can be approved. HR must verify the certificate.",
+  "Emergency leave":
+    "Emergency leave needs supporting evidence before approval. HR must verify it.",
+};
+
 // Rules HR's approval must satisfy beyond the submission rules. The
 // maternity 60-day notice window is left to HR's judgement, not enforced.
 export function approvalProblem(
@@ -143,8 +163,8 @@ export function approvalProblem(
 ) {
   const submitted = submissionProblem(category, input.details);
   if (submitted) return submitted;
-  if (category === "Emergency leave" && input.attachments < 1)
-    return "Emergency leave needs supporting evidence before approval. HR must verify it.";
+  if (evidenceRequired[category] && input.attachments < 1)
+    return evidenceRequired[category];
   if (category !== "Paternity leave") return "";
   const birth = input.details.birth_on;
   if (!birth || birth !== input.start)

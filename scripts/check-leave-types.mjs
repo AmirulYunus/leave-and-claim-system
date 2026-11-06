@@ -82,11 +82,23 @@ try {
     new_password: "chosen-password-1",
   });
   const decide = (id, extra = {}, expected = 200) =>
-    api("workspace", "HR", "PATCH", { id, status: "Approved", ...extra }, expected);
+    api(
+      "workspace",
+      "HR",
+      "PATCH",
+      { id, status: "Approved", ...extra },
+      expected,
+    );
 
   // Maternity: 98 consecutive days with confinement and notice dates.
   const maternity = calendarDays(`${year + 1}-02-01`, 98);
-  await api("workspace", "Tester", "POST", leave("Maternity leave", maternity), 400);
+  await api(
+    "workspace",
+    "Tester",
+    "POST",
+    leave("Maternity leave", maternity),
+    400,
+  );
   await api(
     "workspace",
     "Tester",
@@ -115,7 +127,9 @@ try {
     "workspace",
     "Tester",
     "POST",
-    leave("Paternity leave", paternity, 8, { notified_on: `${year + 1}-06-01` }),
+    leave("Paternity leave", paternity, 8, {
+      notified_on: `${year + 1}-06-01`,
+    }),
     400,
   );
   const { id: paternityId } = await api(
@@ -134,7 +148,13 @@ try {
 
   // Training: category required, one duration for every weekday.
   const training = weekdays(`${year}-03-02`, 2);
-  await api("workspace", "Tester", "POST", leave("Training leave", training), 400);
+  await api(
+    "workspace",
+    "Tester",
+    "POST",
+    leave("Training leave", training),
+    400,
+  );
   await api(
     "workspace",
     "Tester",
@@ -184,9 +204,20 @@ try {
     201,
   );
   await decide(emergencyId, {}, 400);
-  await upload("Tester", emergencyId, "renamed.pdf", new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), 400);
+  await upload(
+    "Tester",
+    emergencyId,
+    "renamed.pdf",
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    400,
+  );
   await upload("Employee", emergencyId, "evidence.pdf", pdf, 404);
-  const { id: attachmentId } = await upload("Tester", emergencyId, "evidence.pdf", pdf);
+  const { id: attachmentId } = await upload(
+    "Tester",
+    emergencyId,
+    "evidence.pdf",
+    pdf,
+  );
   await decide(emergencyId);
   await upload("Tester", emergencyId, "late.pdf", pdf, 400);
   for (const [who, status] of [
@@ -202,12 +233,40 @@ try {
       assert.deepEqual(new Uint8Array(await response.arrayBuffer()), pdf);
   }
 
+  // Medical: within 48 hours of the start date, certificate before approval.
+  const { asOf } = (await api("workspace", "Tester")).entitlements;
+  const sameYear = (date) => date.startsWith(`${year}-`);
+  const late = weekdays(iso(Date.parse(asOf) - 10 * day), 1);
+  if (sameYear(late[0])) {
+    const refused = await api(
+      "workspace",
+      "Tester",
+      "POST",
+      leave("Medical leave", late),
+      400,
+    );
+    assert.match(refused.error, /48 hours/);
+  }
+  const sick = weekdays(asOf, 1);
+  if (sameYear(sick[0])) {
+    const { id: medicalId } = await api(
+      "workspace",
+      "Tester",
+      "POST",
+      leave("Medical leave", sick),
+      201,
+    );
+    await decide(medicalId, {}, 400);
+    await upload("Tester", medicalId, "certificate.pdf", pdf);
+    await decide(medicalId);
+  }
+
   const saved = (await api("workspace", "Tester")).requests.find(
     (request) => request.id === paternityId,
   );
   assert.equal(saved.details.birth_on, paternity[0]);
   console.log(
-    "PASS: maternity and paternity rules, training categories and Annual charging, emergency evidence, and document access.",
+    "PASS: maternity and paternity rules, training categories and Annual charging, emergency and medical evidence, the 48-hour medical rule, and document access.",
   );
 } catch (error) {
   console.error(error.message);
@@ -221,7 +280,9 @@ try {
   for (const { storage_key } of files.rows)
     await unlink(path.resolve(".storage/uploads", storage_key)).catch(() => {});
   for (const table of ["attachments", "leave_entries"])
-    await client.query(`DELETE FROM ${table} WHERE request_id IN ${ids}`, [prefix]);
+    await client.query(`DELETE FROM ${table} WHERE request_id IN ${ids}`, [
+      prefix,
+    ]);
   await client.query("DELETE FROM requests WHERE note = $1", [prefix]);
   await client.query("DELETE FROM employees WHERE email = $1", [email]);
   await client.end();

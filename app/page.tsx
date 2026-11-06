@@ -94,9 +94,9 @@ const leaveHelp: Record<string, string> = {
   "Annual leave":
     "Every weekday from the start to the end date, as half days (4 hours) or full days (8 hours). Public holidays are not excluded automatically; choose the dates you need.",
   "Medical leave":
-    "Weekdays covered by your medical certificate, as half or full days. HR must verify certification and eligibility.",
+    "Weekdays covered by your medical certificate, as half or full days. Apply within 48 hours of the start date and attach the certificate: HR cannot approve without it.",
   "Hospitalisation leave":
-    "Weekdays covered by your certificate, as half or full days. HR must verify certification and eligibility.",
+    "Weekdays covered by your certificate, as half or full days. Attach the certificate: HR cannot approve without it.",
   "Emergency leave":
     "For unexpected emergencies; you may apply after the leave. Upload supporting evidence: HR cannot approve without it. Approved hours are charged to Annual Leave.",
   "Training leave":
@@ -530,16 +530,13 @@ export default function Home() {
     }
     const target = requests.find((r) => r.id === id);
     if (!target || target.status !== "Pending") return;
-    const medicalVerified = ["Medical leave", "Hospitalisation leave"].includes(
-      target.category,
-    )
-      ? window.confirm(
-          "Have you verified medical certification, notification, and statutory eligibility? A rejection must have a lawful basis.",
-        )
-      : false;
     if (
+      status === "Approved" &&
       ["Medical leave", "Hospitalisation leave"].includes(target.category) &&
-      !medicalVerified
+      target.attachments?.length &&
+      !window.confirm(
+        "Have you checked that the attached medical certificate is valid and covers these dates?",
+      )
     )
       return;
     let birth_on: string | null | undefined;
@@ -556,7 +553,7 @@ export default function Home() {
     }
     setBusy(true);
     try {
-      await persist("PATCH", { id, status, medicalVerified, birth_on });
+      await persist("PATCH", { id, status, birth_on });
       await refresh();
       setMessage(`Request ${status.toLowerCase()} and saved.`);
     } catch (error) {

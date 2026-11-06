@@ -1,11 +1,7 @@
 import { hasPermission } from "../../lib/permissions";
 import { authenticate } from "../../lib/auth";
 import { database } from "../../lib/prisma";
-import {
-  datesBetween,
-  validateLeave,
-  type LeaveEntry,
-} from "../../lib/time";
+import { datesBetween, validateLeave, type LeaveEntry } from "../../lib/time";
 import {
   entitlementRates,
   leaveAllowanceHours,
@@ -16,6 +12,7 @@ import {
   balanceCategory,
   isFixedLength,
   leaveCategories,
+  medicalSubmissionProblem,
   scheduleProblem,
   submissionProblem,
   type LeaveDetails,
@@ -168,7 +165,11 @@ async function validateLeaveEntries(
   category: string,
   entries: LeaveEntry[],
   details: LeaveDetails,
-  { excludeId, submitting }: { excludeId?: number; submitting: boolean },
+  {
+    excludeId,
+    submitting,
+    submittedAt = new Date(),
+  }: { excludeId?: number; submitting: boolean; submittedAt?: Date },
 ) {
   const fixed = isFixedLength(category);
   if (
@@ -177,13 +178,22 @@ async function validateLeaveEntries(
     new Set(entries.map((entry) => entry.date)).size !== entries.length
   )
     throw new ValidationError("Choose unique eligible dates.");
-  if (entries.some((entry) => datesBetween(entry.date, entry.date).length !== 1))
+  if (
+    entries.some((entry) => datesBetween(entry.date, entry.date).length !== 1)
+  )
     throw new ValidationError("Use valid calendar dates.");
   const schedule = scheduleProblem(category, entries);
   if (schedule) throw new ValidationError(schedule);
   if (submitting) {
     const problem = submissionProblem(category, details);
     if (problem) throw new ValidationError(problem);
+  }
+  if (category === "Medical leave") {
+    const late = medicalSubmissionProblem(
+      entries.map((entry) => entry.date).sort()[0],
+      submittedAt,
+    );
+    if (late) throw new ValidationError(late);
   }
   const today = malaysiaDate();
   const year = Number(entries[0].date.slice(0, 4));
@@ -474,13 +484,6 @@ export async function PATCH(request: Request) {
           },
           { status: 403 },
         );
-      if (
-        ["Medical leave", "Hospitalisation leave"].includes(target.category) &&
-        input.medicalVerified !== true
-      )
-        throw new ValidationError(
-          "HR must verify medical certification and statutory eligibility.",
-        );
       const details = storedDetails(target);
       // HR records the verified birth date when approving paternity leave
       // requested before the birth.
@@ -525,7 +528,11 @@ export async function PATCH(request: Request) {
           target.category,
           entries,
           details,
-          { excludeId: input.id, submitting: false },
+          {
+            excludeId: input.id,
+            submitting: false,
+            submittedAt: target.created_at,
+          },
         );
       }
       await tx.requests.update({

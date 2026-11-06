@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   approvalProblem,
   balanceCategory,
+  medicalSubmissionProblem,
   scheduleDates,
   scheduleProblem,
   submissionProblem,
@@ -142,21 +143,43 @@ test("emergency and external training are charged to annual leave", () => {
   assert.equal(balanceCategory("Medical leave", null), "Medical leave");
 });
 
-test("emergency approval needs evidence", () => {
+test("medical, hospitalisation and emergency approval need a document", () => {
   const input = {
     details: none,
     start: "2026-11-02",
     joinDate: "2024-01-01",
     priorBirths: [],
   };
-  assert.notEqual(
-    approvalProblem("Emergency leave", { ...input, attachments: 0 }),
-    "",
-  );
+  for (const category of [
+    "Medical leave",
+    "Hospitalisation leave",
+    "Emergency leave",
+  ]) {
+    assert.notEqual(
+      approvalProblem(category, { ...input, attachments: 0 }),
+      "",
+    );
+    assert.equal(approvalProblem(category, { ...input, attachments: 1 }), "");
+  }
   assert.equal(
-    approvalProblem("Emergency leave", { ...input, attachments: 1 }),
+    approvalProblem("Annual leave", { ...input, attachments: 0 }),
     "",
   );
+});
+
+test("medical leave is submitted within 48 hours of midnight Malaysia time", () => {
+  const start = "2026-11-02";
+  for (const [now, ok] of [
+    ["2026-10-20T00:00:00Z", true],
+    ["2026-11-03T15:59:59Z", true],
+    ["2026-11-03T16:00:00Z", true],
+    ["2026-11-03T16:00:01Z", false],
+  ])
+    assert.equal(
+      medicalSubmissionProblem(start, new Date(now)) === "",
+      ok,
+      now,
+    );
 });
 
 test("paternity approval checks birth date, service and earlier births", () => {

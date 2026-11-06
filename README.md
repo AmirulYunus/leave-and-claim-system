@@ -62,6 +62,7 @@ Every API handler requires a signed-in session and checks the employee's current
 `app/lib/leave-types.ts` holds the category rules carried over from the Dataverse solution (see `scripts/dataverse/LEAVE_RULES_RECHECK_2026-10-25.md`). HR approves every type.
 
 - **Durations:** annual, medical, hospitalisation, emergency, training and unpaid leave cover every weekday from the start to the end date, with one duration for every date: half day (4 hours) or full day (8 hours). Fractional hours and weekend dates are refused.
+- **Medical and hospitalisation leave:** HR cannot approve them until a medical certificate is attached, and must check that it is valid. Medical leave must be submitted within 48 hours of its start date, measured from midnight Malaysia time.
 - **Emergency leave:** may be requested after the leave. HR cannot approve it until a supporting document is attached. Approved hours are charged to Annual Leave.
 - **Training leave:** the employee chooses Company Required (not charged) or Employee-Requested External (charged to Annual Leave).
 - **Maternity leave:** 98 consecutive calendar days from the start date, with the expected confinement date and formal notice date. The 60-day notice window is left to HR's judgement rather than enforced.
@@ -72,7 +73,7 @@ Every API handler requires a signed-in session and checks the employee's current
 
 Employees attach PDF, PNG or JPEG files up to 10 MB to their own pending leave requests, either in the request form or from the request list. The file's content must match its extension. The owner and HR or Admin can download documents; anyone else gets "not found". Files are stored under random names in `.storage/uploads` (set `UPLOAD_DIR` to change it); S3 storage for staging and production is still to be added behind `app/lib/storage.ts`.
 
-Carry-forward, public holidays, cancellation, marriage and compassionate leave, and certificate uploads for medical leave are pending. See LEAVE_POLICY.md for confirmed policy and unresolved decisions.
+Carry-forward, public holidays, cancellation, and marriage and compassionate leave are pending. See LEAVE_POLICY.md for confirmed policy and unresolved decisions.
 
 Database credentials stay on the server; DATABASE_URL must never use a NEXT_PUBLIC_ prefix. The Docker volume preserves records across container stops; removing its volume deletes them.
 

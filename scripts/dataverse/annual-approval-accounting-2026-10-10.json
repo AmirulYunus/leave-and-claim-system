@@ -1,0 +1,13 @@
+{
+  "assemblyId": "7f23a4e2-53c4-f111-a05a-000d3a826b69",
+  "pluginTypeId": "12bdad5a-93c4-f111-a05a-000d3a826b69",
+  "stepId": "e755f2b5-93c4-f111-a05a-000d3a826b69",
+  "stage": 40,
+  "mode": 0,
+  "preImage": "BeforeApproval",
+  "sha256": "efc6d1f0687ade6e680d6bab87fb86729b63e14ac8b46a44a10376b411b8a8d8",
+  "mainAssemblySha256": "c111caddcfe1fa191aea24ae3e5808dbce257807ad3cc5f59944d9a424698721",
+  "deductionsActive": true,
+  "liveTestsComplete": false,
+  "fixtureEmployeeId": "6dd608e3-45c5-4b8b-93a2-5eec5758f62b"
+}

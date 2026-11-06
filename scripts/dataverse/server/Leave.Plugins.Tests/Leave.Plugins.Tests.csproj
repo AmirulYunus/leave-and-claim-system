@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>disable</Nullable><DefineConstants>$(DefineConstants);USE_EXISTING_GUARD</DefineConstants></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.PowerPlatform.Dataverse.Client" Version="1.2.27" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.12" />
+    <Compile Include="../Leave.Plugins/LeaveGuards.cs" Link="LeaveGuards.cs" />
+    <Compile Include="../Leave.Plugins/DecisionAuthority.cs" Link="DecisionAuthority.cs" />
+    <Compile Include="../Leave.Plugins/CarryForwardDraft.cs" Link="CarryForwardDraft.cs" />
+    <Compile Include="../Leave.Plugins/CarryForwardExceptionPolicy.cs" Link="CarryForwardExceptionPolicy.cs" />
+    <Compile Include="../Leave.Plugins/CarryForwardWriteGuard.cs" Link="CarryForwardWriteGuard.cs" />
+    <Compile Include="../Leave.Plugins/UniformAnnualDates.cs" Link="UniformAnnualDates.cs" />
+    <Compile Include="../Leave.Plugins/LeaveRangeSchedule.cs" Link="LeaveRangeSchedule.cs" />
+    <Compile Include="../Leave.Plugins/SuperiorRecordAccess.cs" Link="SuperiorRecordAccess.cs" />
+    <Compile Include="../Leave.Plugins/EntitlementPreview.cs" Link="EntitlementPreview.cs" />
+    <Compile Include="../Leave.Plugins/MedicalHospitalBalance.cs" Link="MedicalHospitalBalance.cs" />
+    <Compile Include="../Leave.Plugins/SubmissionValidation.cs" Link="SubmissionValidation.cs" />
+    <Compile Include="../Leave.Plugins/SickLeaveRules.cs" Link="SickLeaveRules.cs" />
+    <Compile Include="../Leave.Plugins/MaternityApprovalRules.cs" Link="MaternityApprovalRules.cs" />
+    <Compile Include="../Leave.Plugins/PaternityApprovalRules.cs" Link="PaternityApprovalRules.cs" />
+    <Compile Include="../Leave.Plugins/MarriageApprovalRules.cs" Link="MarriageApprovalRules.cs" />
+    <Compile Include="../Leave.Plugins/CompassionateApprovalRules.cs" Link="CompassionateApprovalRules.cs" />
+    <Compile Include="../Leave.Plugins/EmergencyApprovalRules.cs" Link="EmergencyApprovalRules.cs" />
+    <Compile Include="../Leave.Plugins/TrainingPolicy.cs" Link="TrainingPolicy.cs" />
+    <Compile Include="../Leave.Plugins/TrainingApprovalRules.cs" Link="TrainingApprovalRules.cs" />
+    <Compile Include="../Leave.Plugins/UnpaidPolicy.cs" Link="UnpaidPolicy.cs" />
+    <Compile Include="../Leave.Plugins/PublicAbsence.cs" Link="PublicAbsence.cs" />
+    <Compile Include="../Leave.Plugins/BalanceLedger.cs" Link="BalanceLedger.cs" />
+    <Compile Include="../Leave.Plugins/CalendarAnnualGrant.cs" Link="CalendarAnnualGrant.cs" />
+    <Compile Include="../Leave.Plugins/BalancePersistence.cs" Link="BalancePersistence.cs" />
+    <Compile Include="../Leave.BalanceGuards/AnnualGrantOperation.cs" Link="AnnualGrantOperation.cs" />
+    <Compile Include="../Leave.BalanceGuards/SickGrantOperation.cs" Link="SickGrantOperation.cs" />
+    <Compile Include="../Leave.BalanceGuards/HospitalGrantOperation.cs" Link="HospitalGrantOperation.cs" />
+    <Compile Include="../Leave.BalanceGuards/BalanceStagingGuard.cs" Link="BalanceStagingGuard.cs" />
+    <Compile Include="../Leave.BalanceGuards/AnnualApprovalAccounting.cs" Link="AnnualApprovalAccounting.cs" />
+    <Compile Include="../Leave.BalanceGuards/FutureCancellation.cs" Link="FutureCancellation.cs" />
+    <Compile Include="../Leave.BalanceGuards/CarryForwardPreviewOperation.cs" Link="CarryForwardPreviewOperation.cs" />
+    <Compile Include="../Leave.BalanceGuards/CarryForwardConfirmOperation.cs" Link="CarryForwardConfirmOperation.cs" />
+    <Compile Include="../Leave.BalanceGuards/CarryForwardExceptionOperation.cs" Link="CarryForwardExceptionOperation.cs" />
+  </ItemGroup>
+</Project>

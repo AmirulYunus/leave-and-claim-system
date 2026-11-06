@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Share placeholders, never real credentials
+!.env.example
+
+# Generated Prisma client
+/app/generated/prisma/
+
+# Local Dataverse audit exports can contain employee details
+/scripts/dataverse/annual-credit-audit-*.json

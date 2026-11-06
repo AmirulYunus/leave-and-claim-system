@@ -1,0 +1,23 @@
+{
+  "assemblyId": "7f23a4e2-53c4-f111-a05a-000d3a826b69",
+  "pluginTypeId": "8223a4e2-53c4-f111-a05a-000d3a826b69",
+  "sha256": "bb49a2e85223b421e08182d0f86e1480e76206f1af3abf1a88fa95a3290e3971",
+  "steps": {
+    "cr2c9_leavebalanceperiod Create": "8323a4e2-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceperiod Update": "914eade8-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceperiod Delete": "944eade8-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceperiod Assign": "974eade8-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceperiod SetState": "9a4eade8-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceperiod CreateMultiple": "8b67c7ee-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceperiod UpdateMultiple": "8e67c7ee-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceentry Create": "9167c7ee-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceentry Update": "9467c7ee-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceentry Delete": "9767c7ee-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceentry Assign": "9a67c7ee-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceentry SetState": "9d67c7ee-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceentry CreateMultiple": "a067c7ee-53c4-f111-a05a-000d3a826b69",
+    "cr2c9_leavebalanceentry UpdateMultiple": "a367c7ee-53c4-f111-a05a-000d3a826b69"
+  },
+  "processingActive": false,
+  "purpose": "Fail-closed staging only; no grant or debit processor enabled"
+}

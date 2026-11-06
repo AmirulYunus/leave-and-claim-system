@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font:14px 'Segoe UI',sans-serif;color:#242424;margin:16px}h2{font-size:18px;margin:0 0 8px}h3{font-size:16px;margin:22px 0 8px}p{line-height:1.5}
+button{font:inherit;border:0;border-radius:4px;background:#0078d4;color:white;padding:10px 16px;cursor:pointer}button:disabled{background:#aaa;cursor:default}
+#refresh{background:white;color:#005a9e;border:1px solid #8a8886}#balance,#carryForward,#result{margin-top:14px;white-space:pre-line;line-height:1.6}.error{color:#a4262c}.note{color:#605e5c}.test-warning{color:#8a4b00;font-weight:600}
+label{display:block;margin:10px 0 4px;font-weight:600}input{font:inherit;box-sizing:border-box;max-width:420px;width:100%;padding:9px;border:1px solid #8a8886;border-radius:4px}#exceptionStatus{white-space:pre-line;line-height:1.5;margin:10px 0}
+.carry-card{margin-top:24px;padding:18px 20px;border:1px solid #d2d0ce;border-radius:8px;background:#f8f9fb;max-width:900px}.carry-card h3{margin:0 0 6px;font-size:18px}.carry-card p{margin:6px 0 14px}.carry-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}#confirmCarry{background:white;color:#005a9e;border:1px solid #8a8886}#upcomingPreview{margin-top:16px;padding:14px 16px;border:1px solid #bad9f2;border-left:4px solid #0078d4;border-radius:4px;background:#fff;white-space:pre-line;line-height:1.7}#upcomingPreview:empty{display:none}#carryAvailability{font-weight:600;color:#605e5c}#priorYearDetails{margin-top:18px;max-width:940px}#priorYearDetails summary{cursor:pointer;color:#005a9e;font-weight:600}#hrPreview{white-space:pre-line;line-height:1.6;margin:12px 0}
+</style></head>
+<body>
+<h2>Annual leave balance</h2>
+<p class="note">Current calendar year, January–December. Annual leave is credited only after each calendar month ends. The joining month counts in full once it ends. The server also checks completed-month leave when approving a request.</p>
+<button id="refresh" type="button" disabled>Refresh balance</button>
+<div id="balance" role="status" aria-live="polite">Loading balance…</div>
+<section id="hrPreviewSection" class="carry-card" hidden><h3 id="carryHeading">Carry-forward estimate</h3>
+<p class="note" id="carryIntro">See how much unused Annual Leave may move to next year.</p>
+<div id="hrPreview" role="status" aria-live="polite"></div>
+<div class="carry-actions"><button id="previewUpcoming" type="button" hidden>Preview estimated days</button>
+<button id="confirmCarry" type="button" hidden disabled>Confirm final carry-forward</button></div>
+<div id="upcomingPreview" role="status" aria-live="polite"></div>
+<p id="carryAvailability" role="status" aria-live="polite"></p>
+<div id="adjustSection" hidden><label for="reviewedDays">Reviewed carry-forward days</label><input id="reviewedDays" type="number" min="0" step="0.5" inputmode="decimal">
+<p class="note">HR may reduce the proposed amount. Enter a reason and supporting document reference if it changes; the remaining unused leave stays recorded separately.</p>
+<label for="adjustReason">Adjustment reason</label><input id="adjustReason" maxlength="2000" placeholder="Required only if the amount changes">
+<label for="adjustDocument">Supporting document reference</label><input id="adjustDocument" maxlength="200" placeholder="Required only if the amount changes"></div></section>
+<details id="priorYearDetails" hidden><summary id="priorYearSummary">Previous carry-forward record</summary><div id="carryForward" role="status" aria-live="polite"></div></details>
+<section id="exceptionSection" hidden><h3>Written approval above five days</h3>
+<p class="note">HR can record a written approval from the employee's current immediate Superior between 1 October and 15 December. The record is locked after saving and is checked again when HR confirms the year-end balance.</p>
+<label for="exceptionDays">Approved maximum days</label><input id="exceptionDays" type="number" min="5.5" max="125" step="0.5" inputmode="decimal" placeholder="For example, 7.5">
+<label for="exceptionReference">Written approval document reference</label><input id="exceptionReference" maxlength="200" placeholder="HR document or case reference">
+<div id="exceptionStatus" role="status" aria-live="polite"></div>
+<button id="recordException" type="button">Record verified written approval</button></section>
+<h3>Automatic earned-leave grants</h3>
+<p class="note">The daily grant flow credits only the increase in cumulative leave earned through completed calendar months. Save HR employment details for an employee who has no balance period. Older development test records may still contain excess historical credit; the approval check does not allow unearned leave to be used.</p>
+<h3>Hospitalisation allowance</h3>
+<p class="note">For a full-time employee, grant the current calendar year's Hospitalisation allowance before approving a Hospitalisation request. Repeating the grant adds no duplicate credit. The company combined figure shown on the Employee form also subtracts approved Medical Leave; Hospitalisation approval retains its separate statutory 60-day minimum.</p>
+<button id="grantHospital" type="button" disabled>Grant current-year Hospitalisation leave</button>
+<div id="hospitalResult" role="status" aria-live="polite"></div>
+<script>
+"use strict";
+let api, form, balanceSequence=0, previewCarryHours=null;
+const refresh=document.getElementById("refresh"), balance=document.getElementById("balance"), carryForward=document.getElementById("carryForward"), priorYearDetails=document.getElementById("priorYearDetails"),priorYearSummary=document.getElementById("priorYearSummary"),hrPreviewSection=document.getElementById("hrPreviewSection"),carryHeading=document.getElementById("carryHeading"),carryIntro=document.getElementById("carryIntro"),carryAvailability=document.getElementById("carryAvailability"), hrPreview=document.getElementById("hrPreview"), confirmCarry=document.getElementById("confirmCarry"),previewUpcoming=document.getElementById("previewUpcoming"),upcomingPreview=document.getElementById("upcomingPreview");
+const exceptionSection=document.getElementById("exceptionSection"),exceptionDays=document.getElementById("exceptionDays"),exceptionReference=document.getElementById("exceptionReference"),exceptionStatus=document.getElementById("exceptionStatus"),recordException=document.getElementById("recordException");
+const adjustSection=document.getElementById("adjustSection"),reviewedDays=document.getElementById("reviewedDays"),adjustReason=document.getElementById("adjustReason"),adjustDocument=document.getElementById("adjustDocument");
+const grantHospital=document.getElementById("grantHospital"),hospitalResult=document.getElementById("hospitalResult");
+const annualType="959c93de-1197-4de4-a660-2e2c3266f0fe"; // Development reference; rebind for production.
+function employeeId(){const id=(form&&form.data.entity.getId()||"").replace(/[{}]/g,"");return /^[0-9a-f-]{36}$/i.test(id)?id:null;}
+function malaysiaYear(){return Number(new Intl.DateTimeFormat("en",{timeZone:"Asia/Kuala_Lumpur",year:"numeric"}).format(new Date()));}
+function malaysiaMonth(){return Number(new Intl.DateTimeFormat("en",{timeZone:"Asia/Kuala_Lumpur",month:"numeric"}).format(new Date()));}
+function malaysiaDay(){return Number(new Intl.DateTimeFormat("en",{timeZone:"Asia/Kuala_Lumpur",day:"numeric"}).format(new Date()));}
+function hoursAndDays(hours){if(!Number.isSafeInteger(hours)||hours<0)throw new Error("A carry-forward amount is invalid.");const days=hours/8;return hours+" hours ("+new Intl.NumberFormat("en-MY",{maximumFractionDigits:2}).format(days)+(days===1?" day)":" days)");}
+async function allRows(table,options){
+ const rows=[];
+ do{const page=await api.WebApi.online.retrieveMultipleRecords(table,options,5000);rows.push(...page.entities);options=page.nextLink?page.nextLink.substring(page.nextLink.indexOf("?")):null;}while(options);
+ return rows;
+}
+function summarize(entries){
+ let granted=0,debited=0,reversed=0;
+ for(const row of entries){
+  const hours=row.cr2c9_hours;
+  if(!Number.isSafeInteger(hours))throw new Error("A balance entry has invalid hours.");
+  if(row.cr2c9_entrykind===290040000&&hours>0)granted+=hours;
+  else if(row.cr2c9_entrykind===290040001&&hours<0)debited-=hours;
+  else if(row.cr2c9_entrykind===290040002&&hours>0)reversed+=hours;
+  else throw new Error("A balance entry needs review.");
+ }
+ const used=debited-reversed,available=granted-used;
+ if(used<0||available<0||![granted,used,available].every(Number.isSafeInteger))throw new Error("The recorded balance needs review.");
+ return {granted,used,available};
+}
+async function refreshBalance(){
+ const sequence=++balanceSequence,id=employeeId();
+ if(!api||!id){balance.textContent="Save an Employee record before viewing its balance.";priorYearDetails.hidden=true;return;}
+ refresh.disabled=true;balance.className="";balance.textContent="Reading recorded balance…";
+ priorYearDetails.hidden=true;carryForward.className="note";carryForward.textContent="";
+ try{
+  const year=malaysiaYear(),start=year+"-01-01",end=year+"-12-31";
+  const periods=await allRows("cr2c9_leavebalanceperiod","?$select=cr2c9_leavebalanceperiodid,cr2c9_name,cr2c9_periodstart,cr2c9_periodend&$filter=_cr2c9_employee_value eq "+id+" and _cr2c9_leavetype_value eq "+annualType);
+  if(sequence!==balanceSequence)return;
+  const matches=periods.filter(p=>p.cr2c9_periodstart<=end&&p.cr2c9_periodend>=start);
+  if(!matches.length){balance.textContent="No Annual Leave balance period has been granted for "+year+". A full-year rate is not an available balance. Missing HR inputs or a pending policy decision may prevent a grant.";return;}
+  if(matches.length!==1||matches[0].cr2c9_periodstart!==start||matches[0].cr2c9_periodend!==end)throw new Error("Annual Leave balance periods overlap or differ from the calendar year.");
+  const period=matches[0],periodId=period.cr2c9_leavebalanceperiodid;
+  if(!/^[0-9a-f-]{36}$/i.test(periodId))throw new Error("The balance period ID is invalid.");
+  const entries=await allRows("cr2c9_leavebalanceentry","?$select=cr2c9_hours,cr2c9_entrykind&$filter=_cr2c9_balanceperiod_value eq "+periodId);
+  if(sequence!==balanceSequence)return;
+  const totals=summarize(entries),email=typeof form.getAttribute==="function"?(form.getAttribute("cr2c9_email")?.getValue()||""):"";
+  const test=/synthetic|fictional|test/i.test(period.cr2c9_name||"")||/@example\.invalid$/i.test(email);
+  balance.className=test?"test-warning":"";
+  balance.textContent=(test?"Development test balance — not a real company allowance.\n":"")+
+   "Period: "+start+" to "+end+".\nRecord: "+(period.cr2c9_name||"Annual Leave")+".\n"+
+   "Recorded grants: "+hoursAndDays(totals.granted)+".\nApproved leave used (after cancellation reversals): "+hoursAndDays(totals.used)+".\nRecorded remaining (may include unearned leave): "+hoursAndDays(totals.available)+".";
+ }catch(error){if(sequence===balanceSequence){balance.className="error";balance.textContent="Balance could not be read. Check access or ask an administrator to review the balance records. "+(error&&error.message||"");}}
+ finally{if(sequence===balanceSequence){refresh.disabled=false;await Promise.all([refreshCarryForward(sequence,id),refreshHrPreview(sequence,id)]);}}
+}
+function HrPreviewRequest(id){this.entity={entityType:"cr2c9_employee",id:id};}
+HrPreviewRequest.prototype.getMetadata=function(){return {boundParameter:"entity",operationName:"cr2c9_PreviewAnnualCarryForward",operationType:0,
+ parameterTypes:{entity:{typeName:"mscrm.cr2c9_employee",structuralProperty:5}}};};
+function HrConfirmRequest(id,hours,reason,document){this.entity={entityType:"cr2c9_employee",id:id};this.ReviewedCarryHours=hours;this.AdjustmentReason=reason;this.AdjustmentDocumentReference=document;}
+HrConfirmRequest.prototype.getMetadata=function(){return {boundParameter:"entity",operationName:"cr2c9_ConfirmAnnualCarryForward",operationType:0,
+ parameterTypes:{entity:{typeName:"mscrm.cr2c9_employee",structuralProperty:5},ReviewedCarryHours:{typeName:"Edm.Int32",structuralProperty:1},AdjustmentReason:{typeName:"Edm.String",structuralProperty:1},AdjustmentDocumentReference:{typeName:"Edm.String",structuralProperty:1}}};};
+function HrExceptionRequest(id,hours,reference){this.entity={entityType:"cr2c9_employee",id:id};this.ApprovedLimitHours=hours;this.DocumentReference=reference;}
+HrExceptionRequest.prototype.getMetadata=function(){return {boundParameter:"entity",operationName:"cr2c9_RecordAnnualCarryForwardException",operationType:0,
+ parameterTypes:{entity:{typeName:"mscrm.cr2c9_employee",structuralProperty:5},ApprovedLimitHours:{typeName:"Edm.Int32",structuralProperty:1},DocumentReference:{typeName:"Edm.String",structuralProperty:1}}};};
+function HospitalGrantRequest(id){this.entity={entityType:"cr2c9_employee",id:id};}
+HospitalGrantRequest.prototype.getMetadata=function(){return {boundParameter:"entity",operationName:"cr2c9_GrantCalendarHospitalisationLeave",operationType:0,
+ parameterTypes:{entity:{typeName:"mscrm.cr2c9_employee",structuralProperty:5}}};};
+async function grantCurrentHospital(){
+ const id=employeeId();
+ if(!api||!id||grantHospital.disabled)return;
+ grantHospital.disabled=true;hospitalResult.className="note";hospitalResult.textContent="Checking and granting the current-year allowance…";
+ try{
+  const response=await api.WebApi.online.execute(new HospitalGrantRequest(id));
+  if(!response.ok)throw new Error("The Hospitalisation grant was not accepted.");
+  const result=await response.json();
+  if(!["Granted","AlreadyGranted","PendingHrDetails","PendingPolicy","InvalidDetails","Inactive","PendingAdjustment"].includes(result.Status)||
+     !Number.isSafeInteger(result.CreditedHours)||!Number.isSafeInteger(result.AvailableHours))
+   throw new Error("The Hospitalisation grant response needs review.");
+  hospitalResult.className=result.Status==="Granted"||result.Status==="AlreadyGranted"?"":"test-warning";
+  hospitalResult.textContent="Status: "+result.Status+". Credited: "+hoursAndDays(result.CreditedHours)+
+   ". Recorded Hospitalisation remaining: "+(result.AvailableHours<0?"unavailable":hoursAndDays(result.AvailableHours))+". "+(result.Reason||"");
+ }catch(error){hospitalResult.className="error";hospitalResult.textContent="Hospitalisation allowance was not granted. "+(error&&error.message||"");}
+ finally{grantHospital.disabled=false;}
+}
+async function refreshHrPreview(sequence,id){
+ previewCarryHours=null;adjustSection.hidden=true;
+ confirmCarry.hidden=true;confirmCarry.disabled=true;
+ const upcoming=malaysiaMonth()>=10,year=malaysiaYear();
+ previewUpcoming.hidden=!upcoming;upcomingPreview.textContent="";
+ hrPreview.className="";hrPreview.textContent="";carryAvailability.className="";carryAvailability.textContent="";
+ exceptionSection.hidden=true;
+ if(sequence!==balanceSequence||!id||!api){hrPreviewSection.hidden=true;return;}
+ hrPreviewSection.hidden=!upcoming;
+ if(upcoming){
+  carryHeading.textContent=year+" carry-forward estimate";
+  carryIntro.textContent="See how much of this year's unused Annual Leave could move to "+(year+1)+".";
+  carryAvailability.textContent="Estimate only. A Leave HR reviewer can confirm the final amount from 1 January "+(year+1)+" after year-end.";
+ }
+ try{
+  const response=await api.WebApi.online.execute(new HrPreviewRequest(id));
+  if(!response.ok)throw new Error("HR preview is unavailable.");
+  const result=await response.json();
+  if(sequence!==balanceSequence)return;
+  if(!Number.isSafeInteger(result.SourceYear)||typeof result.Status!=="string")throw new Error("Invalid HR preview response.");
+  hrPreviewSection.hidden=false;
+  carryHeading.textContent=upcoming?year+" carry-forward estimate":"Confirm "+result.SourceYear+" carry-forward";
+  carryIntro.textContent=upcoming?"See how much of this year's unused Annual Leave could move to "+(year+1)+".":"Review the closed-year balance before posting a separate carry-forward credit.";
+  if(malaysiaMonth()>=10){
+   const cutoff=malaysiaMonth()<12||malaysiaDay()<=15;
+   exceptionSection.hidden=false;recordException.hidden=!cutoff;
+   exceptionStatus.textContent=cutoff?"Record only a written approval already given by the immediate Superior.":"The 15 December written-approval deadline has passed.";
+   try{
+    const allPeriods=await allRows("cr2c9_leavebalanceperiod","?$select=cr2c9_leavebalanceperiodid,cr2c9_periodstart,cr2c9_periodend&$filter=_cr2c9_employee_value eq "+id+" and _cr2c9_leavetype_value eq "+annualType);
+    const periodRows=allPeriods.filter(p=>p.cr2c9_periodstart===malaysiaYear()+"-01-01"&&p.cr2c9_periodend===malaysiaYear()+"-12-31");
+    if(periodRows.length===1){
+     const saved=await allRows("cr2c9_carryforwardexception","?$select=cr2c9_approvedlimithours,cr2c9_documentreference&$filter=_cr2c9_sourceperiod_value eq "+periodRows[0].cr2c9_leavebalanceperiodid);
+     if(saved.length>1)throw new Error("Duplicate written approvals need HR review.");
+     if(saved.length===1){exceptionDays.value=String(saved[0].cr2c9_approvedlimithours/8);exceptionReference.value=saved[0].cr2c9_documentreference||"";exceptionDays.disabled=true;exceptionReference.disabled=true;recordException.hidden=true;exceptionStatus.textContent="Written Superior approval recorded for this closing year. Approved maximum: "+hoursAndDays(saved[0].cr2c9_approvedlimithours)+".";}
+    }
+   }catch(error){exceptionStatus.className="error";exceptionStatus.textContent="Written approval status could not be read. "+(error&&error.message||"");recordException.hidden=true;}
+  }
+  if(result.Status==="NoClosedYearBalance"){
+   if(!upcoming)hrPreview.textContent="No "+result.SourceYear+" Annual Leave balance is recorded, so there is no carry-forward to confirm for that year.";
+  }
+  else if(result.Status==="NoCurrentYearBalance")hrPreview.textContent="Create the current-year Annual Leave balance before HR reviews carry-forward.";
+  else if(["ReadyForHrReview","ExistingReview","AlreadyConfirmed"].includes(result.Status)){
+   if(!upcoming)hrPreview.textContent="Closed year: "+result.SourceYear+".\nVerified unused: "+hoursAndDays(result.SourceUnusedHours)+
+    ".\nVerified ceiling: "+hoursAndDays(result.StandardLimitHours)+
+    ".\nProposed carry-forward: "+hoursAndDays(result.CandidateCarryHours)+
+    ".\nSeparate unused amount: "+hoursAndDays(result.SeparateUnusedHours)+
+    ".\nStatus: "+result.Status+".";
+   if(result.Status==="ReadyForHrReview"&&malaysiaMonth()<=3){
+    previewCarryHours=result.CandidateCarryHours;reviewedDays.value=String(previewCarryHours/8);
+    adjustReason.value="";adjustDocument.value="";adjustSection.hidden=false;
+    confirmCarry.hidden=false;confirmCarry.disabled=false;
+   }
+  }else throw new Error("Unknown HR preview status.");
+  if(upcoming){
+   previewUpcoming.hidden=false;
+   confirmCarry.hidden=false;confirmCarry.disabled=false;
+   carryAvailability.textContent="Estimate only. Final confirmation opens 1 January "+(year+1)+" after the year closes.";
+  }
+ }catch(_){if(sequence===balanceSequence){
+  // The current-year estimate only reads the balance already displayed above.
+  // An HR role is still required for written exceptions and final confirmation.
+  exceptionSection.hidden=true;confirmCarry.hidden=true;confirmCarry.disabled=true;
+  hrPreview.textContent="";
+  if(malaysiaMonth()>=10){
+   const year=malaysiaYear();
+   hrPreviewSection.hidden=false;carryHeading.textContent=year+" carry-forward estimate";
+   carryIntro.textContent="See how much of this year's unused Annual Leave could move to "+(year+1)+".";
+   previewUpcoming.hidden=false;
+   carryAvailability.textContent="Estimate only. A Leave HR reviewer can confirm the final amount from 1 January "+(year+1)+" after year-end.";
+  }else hrPreviewSection.hidden=true;
+ }}
+}
+async function previewThisYearCarryForward(){
+ const id=employeeId(),year=malaysiaYear();
+ if(!api||!id||previewUpcoming.hidden)return;
+ previewUpcoming.disabled=true;upcomingPreview.className="note";upcomingPreview.textContent="Calculating the current recorded balance…";
+ try{
+  const periods=await allRows("cr2c9_leavebalanceperiod","?$select=cr2c9_leavebalanceperiodid,cr2c9_periodstart,cr2c9_periodend&$filter=_cr2c9_employee_value eq "+id+" and _cr2c9_leavetype_value eq "+annualType);
+  const matches=periods.filter(p=>p.cr2c9_periodstart===year+"-01-01"&&p.cr2c9_periodend===year+"-12-31");
+  if(matches.length!==1)throw new Error("Exactly one current-year Annual Leave balance is required for a preview.");
+  const periodId=matches[0].cr2c9_leavebalanceperiodid;
+  if(!/^[0-9a-f-]{36}$/i.test(periodId))throw new Error("The balance period ID is invalid.");
+  const [entries,exceptions]=await Promise.all([
+   allRows("cr2c9_leavebalanceentry","?$select=cr2c9_hours,cr2c9_entrykind&$filter=_cr2c9_balanceperiod_value eq "+periodId),
+   allRows("cr2c9_carryforwardexception","?$select=cr2c9_approvedlimithours&$filter=_cr2c9_sourceperiod_value eq "+periodId)
+  ]);
+  if(exceptions.length>1)throw new Error("Duplicate written approvals need HR review.");
+  const limit=exceptions.length?exceptions[0].cr2c9_approvedlimithours:40;
+  if(!Number.isSafeInteger(limit)||limit<40||limit%4!==0)throw new Error("The written carry-forward limit needs HR review.");
+  const available=summarize(entries).available;
+  const candidate=Math.min(available,limit);
+  if(year!==malaysiaYear())throw new Error("The calendar year changed during the preview. Refresh and try again.");
+  upcomingPreview.className="note";
+  upcomingPreview.textContent="Estimated to carry forward: "+hoursAndDays(candidate)+"\n"+
+   "Unused Annual Leave now: "+hoursAndDays(available)+"\n"+
+   "Maximum allowed: "+hoursAndDays(limit)+"\n"+
+   "Remaining outside carry-forward: "+hoursAndDays(available-candidate)+"\n"+
+   "This estimate may change until 31 December "+year+".";
+ }catch(error){upcomingPreview.className="error";upcomingPreview.textContent="The preview could not be calculated. "+(error&&error.message||"");}
+ finally{previewUpcoming.disabled=false;}
+}
+async function confirmStandardCarryForward(){
+ const id=employeeId();
+ if(!api||!id||confirmCarry.hidden||confirmCarry.disabled)return;
+ if(malaysiaMonth()>=10){carryAvailability.className="error";carryAvailability.textContent="You can preview now, but cannot confirm "+malaysiaYear()+" carry-forward until 1 January "+(malaysiaYear()+1)+" after year-end.";return;}
+ if(malaysiaMonth()>3)return;
+ const hours=Number(reviewedDays.value)*8,reason=adjustReason.value.trim(),document=adjustDocument.value.trim();
+ if(!Number.isSafeInteger(previewCarryHours)||!Number.isSafeInteger(hours)||hours<0||hours>previewCarryHours||hours%4!==0){
+  hrPreview.className="error";hrPreview.textContent="Enter a reviewed amount from zero to the proposal in half-day steps.";return;
+ }
+ if(hours!==previewCarryHours&&(!reason||!document)){
+  hrPreview.className="error";hrPreview.textContent="A lower reviewed amount needs a reason and supporting document reference.";return;
+ }
+ if(hours===previewCarryHours&&(reason||document)){
+  hrPreview.className="error";hrPreview.textContent="Clear the adjustment fields when confirming the proposed amount.";return;
+ }
+ if(!window.confirm("Confirm the reviewed carry-forward for this employee? The server will recheck the closing-year balance and any timely written approval, then post one separate credit."))return;
+ confirmCarry.disabled=true;
+ try{
+  const response=await api.WebApi.online.execute(new HrConfirmRequest(id,hours,reason,document));
+  if(!response.ok)throw new Error("HR confirmation was not accepted.");
+  const result=await response.json();
+  if(!["Confirmed","AlreadyConfirmed"].includes(result.Status)||!Number.isSafeInteger(result.CreditedHours))
+   throw new Error("The confirmation response needs review.");
+  hrPreview.textContent="HR confirmation: "+result.Status+". Credited separately: "+hoursAndDays(result.CreditedHours)+". Separate unused: "+hoursAndDays(result.SeparateUnusedHours)+".";
+  confirmCarry.hidden=true;
+  await refreshBalance();
+ }catch(error){hrPreview.className="error";hrPreview.textContent="Carry-forward was not confirmed. "+(error&&error.message||"");confirmCarry.disabled=false;}
+}
+async function recordWrittenException(){
+ const id=employeeId(),days=Number(exceptionDays.value),reference=exceptionReference.value.trim();
+ const hours=days*8;
+ if(!api||!id||recordException.hidden||!Number.isSafeInteger(hours)||hours<=40||hours%4!==0||!reference){
+  exceptionStatus.className="error";exceptionStatus.textContent="Enter more than five days in half-day steps and the written approval document reference.";return;
+ }
+ if(!window.confirm("Has the current immediate Superior approved this higher limit in writing, and has HR verified the document? This record will be locked."))return;
+ recordException.disabled=true;exceptionStatus.className="note";exceptionStatus.textContent="Recording HR verification…";
+ try{
+  const response=await api.WebApi.online.execute(new HrExceptionRequest(id,hours,reference));
+  if(!response.ok)throw new Error("The written approval was not accepted.");
+  const result=await response.json();
+  if(!["Recorded","AlreadyRecorded"].includes(result.Status))throw new Error("The verification response needs review.");
+  exceptionDays.disabled=true;exceptionReference.disabled=true;recordException.hidden=true;
+  exceptionStatus.className="note";exceptionStatus.textContent="Written approval "+result.Status.toLowerCase()+". Verified limit: "+hoursAndDays(hours)+". It will be used only after year-end HR confirmation.";
+ }catch(error){exceptionStatus.className="error";exceptionStatus.textContent="Written approval was not recorded. "+(error&&error.message||"");}
+ finally{recordException.disabled=false;}
+}
+async function refreshCarryForward(sequence,id){
+ if(sequence!==balanceSequence)return;
+ const year=malaysiaYear(),closingYear=year-1;
+ try{
+  const periods=await allRows("cr2c9_leavebalanceperiod","?$select=cr2c9_leavebalanceperiodid,cr2c9_periodstart,cr2c9_periodend&$filter=_cr2c9_employee_value eq "+id+" and _cr2c9_leavetype_value eq "+annualType);
+  if(sequence!==balanceSequence)return;
+  const source=periods.filter(p=>p.cr2c9_periodstart===closingYear+"-01-01"&&p.cr2c9_periodend===closingYear+"-12-31");
+  if(source.length>1)throw new Error("More than one closing-year balance period was found.");
+  if(!source.length){priorYearDetails.hidden=true;carryForward.textContent="";return;}
+  priorYearDetails.hidden=false;priorYearSummary.textContent=closingYear+" carry-forward record";
+  const periodId=source[0].cr2c9_leavebalanceperiodid;
+  if(!/^[0-9a-f-]{36}$/i.test(periodId))throw new Error("The closing-year period ID is invalid.");
+  const entries=await allRows("cr2c9_leavebalanceentry","?$select=cr2c9_hours,cr2c9_entrykind&$filter=_cr2c9_balanceperiod_value eq "+periodId);
+  if(sequence!==balanceSequence)return;
+  const totals=summarize(entries);
+  const reviews=await allRows("cr2c9_carryforwardreview","?$select=cr2c9_reviewstatus,cr2c9_originalcarryhours,cr2c9_reviewedcarryhours,cr2c9_originalunusedhours,cr2c9_reviewedunusedhours&$filter=_cr2c9_sourceperiod_value eq "+periodId);
+  if(sequence!==balanceSequence)return;
+  if(reviews.length>1)throw new Error("More than one review was found for the closing-year period.");
+  const credits=await allRows("cr2c9_carryforwardcredit","?$select=cr2c9_hours,cr2c9_useby&$filter=_cr2c9_sourceperiod_value eq "+periodId);
+  if(sequence!==balanceSequence)return;
+  if(credits.length>1)throw new Error("More than one carry-forward credit was found for the closing-year period.");
+  const review=reviews[0];
+  if(!review){if(credits.length)throw new Error("A carry-forward credit has no HR review.");carryForward.textContent=closingYear+" closing-year recorded unused: "+hoursAndDays(totals.available)+".\nStandard carry-forward ceiling: 5 days (40 hours); a higher amount requires written Superior approval and HR verification.\nNo HR review has been prepared or confirmed. No carry-forward credit has been posted by this page.";return;}
+  const label=({290040000:"Draft",290040001:"Pending HR review",290040002:"Confirmed"})[review.cr2c9_reviewstatus];
+  if(!label)throw new Error("The carry-forward review has an unknown status.");
+  if(credits.length&&review.cr2c9_reviewstatus!==290040002)throw new Error("A carry-forward credit exists before HR confirmation.");
+  if(credits.length&&credits[0].cr2c9_hours!==review.cr2c9_reviewedcarryhours)throw new Error("The carry-forward credit differs from HR's reviewed amount.");
+  const creditText=credits.length?"Posted separate carry-forward credit: "+hoursAndDays(credits[0].cr2c9_hours)+"; use by "+credits[0].cr2c9_useby+".":"No separate carry-forward credit is posted.";
+  carryForward.textContent=closingYear+" closing-year recorded unused: "+hoursAndDays(totals.available)+".\nHR review: "+label+".\nOriginal proposed carry-forward: "+hoursAndDays(review.cr2c9_originalcarryhours)+"; separate unused: "+hoursAndDays(review.cr2c9_originalunusedhours)+".\nReviewed carry-forward: "+hoursAndDays(review.cr2c9_reviewedcarryhours)+"; separate unused: "+hoursAndDays(review.cr2c9_reviewedunusedhours)+".\n"+creditText;
+ }catch(error){if(sequence===balanceSequence){priorYearDetails.hidden=false;carryForward.className="error";carryForward.textContent="Carry-forward review could not be read. Check access or ask an administrator to review the records. "+(error&&error.message||"");}}
+}
+window.setGrantContext=function(xrm,context){api=xrm;form=context;grantHospital.disabled=!employeeId();refreshBalance();};
+refresh.addEventListener("click",refreshBalance);
+confirmCarry.addEventListener("click",confirmStandardCarryForward);
+previewUpcoming.addEventListener("click",previewThisYearCarryForward);
+recordException.addEventListener("click",recordWrittenException);
+grantHospital.addEventListener("click",grantCurrentHospital);
+</script></body></html>

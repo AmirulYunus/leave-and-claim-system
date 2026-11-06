@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Leave dashboard</title>
+<style>
+  :root {font:14px "Segoe UI",Arial,sans-serif;color:#17324d;background:#f5f7fb}
+  * {box-sizing:border-box} body {margin:0;padding:24px} main {max-width:1420px;margin:auto}
+  h1 {margin:0;font-size:27px} h2 {font-size:17px;margin:0 0 14px} p {color:#587089}
+  .top,.filters,.cards,.columns {display:flex;gap:14px;flex-wrap:wrap}.top {justify-content:space-between;align-items:center;margin-bottom:18px}
+  .panel,.card {background:#fff;border:1px solid #dce5ef;border-radius:12px;box-shadow:0 2px 8px #12304b09}
+  .panel {padding:18px;margin-bottom:16px}.filters {align-items:end}.filters label {display:grid;gap:5px;font-weight:600;min-width:160px}
+  select,input,button {font:inherit;border-radius:6px;min-height:38px;padding:7px 10px} select,input {border:1px solid #a9bbcd;background:#fff}
+  button {border:1px solid #0078d4;background:#0078d4;color:#fff;cursor:pointer;font-weight:600} button:disabled {opacity:.5;cursor:wait}
+  .cards {margin-bottom:16px}.card {padding:18px;flex:1;min-width:190px}.card strong {display:block;font-size:28px;margin-top:8px;color:#073c69}
+  .columns > section {flex:1;min-width:320px}.muted {color:#61778c}.error {color:#a4262c} table {border-collapse:collapse;width:100%}
+  th,td {padding:10px;text-align:left;border-bottom:1px solid #e7edf4} th {background:#f0f5fa;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+  .scroll {overflow:auto;max-height:420px} .calendar {display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;background:#dce5ef;border:1px solid #dce5ef}
+  .day {background:#fff;min-height:110px;padding:7px;min-width:0}.day.outside {background:#f8fafc;color:#94a4b4}.day b {display:block;margin-bottom:5px}
+  .day-events {max-height:135px;overflow-y:auto;scrollbar-width:thin}.day-count {font-size:11px;color:#526d87;margin-bottom:4px}
+  .event {display:block;background:#e5f2ff;color:#074879;border-radius:4px;padding:3px 5px;margin:2px 0;font-size:11px;overflow-wrap:anywhere}
+  .weekday {background:#eaf1f8;text-align:center;padding:8px;font-weight:700}.empty {padding:15px;color:#61778c}
+  @media(max-width:700px){body{padding:12px}.day{min-height:72px}.event{font-size:10px}.filters label{min-width:100%}}
+</style>
+</head>
+<body><main>
+  <div class="top"><div><h1 id="title">Leave dashboard</h1><p id="subtitle">Pending actions, approved leave and the team calendar.</p></div><button id="refresh">Refresh</button></div>
+  <section class="panel filters" aria-label="Filters">
+    <label>From <input type="date" id="from"></label><label>To <input type="date" id="to"></label>
+    <label>Department <select id="department"><option value="">All departments</option></select></label>
+    <label>Cost Centre <select id="costcentre"><option value="">All cost centres</option></select></label>
+    <button id="apply">Apply filters</button>
+  </section>
+  <p id="status" role="status" aria-live="polite"></p>
+  <div class="cards"><div class="card">Pending approval<strong id="pendingCount">—</strong></div><div class="card">Approved in period<strong id="approvedCount">—</strong></div><div class="card">Upcoming leave<strong id="upcomingCount">—</strong></div></div>
+  <div class="columns"><section class="panel"><h2>Latest applications</h2><div class="scroll"><table><thead><tr><th>Request</th><th>Employee</th><th>Submitted</th><th>Status</th></tr></thead><tbody id="latest"></tbody></table></div></section>
+  <section class="panel"><h2>Upcoming leave</h2><div class="scroll"><table><thead><tr><th>Employee</th><th>Dates</th><th>Department</th><th>Cost Centre</th></tr></thead><tbody id="upcoming"></tbody></table></div></section></div>
+  <section class="panel"><h2 id="calendarTitle">Leave calendar</h2><p>The calendar shows the month containing the From date. The approved-leave list below covers the full selected date range.</p><div id="calendar" class="calendar"></div></section>
+  <section class="panel"><h2>Approved leave in selected period</h2><div class="scroll"><table><thead><tr><th>Request</th><th>Employee</th><th>Dates</th><th>Department</th><th>Cost Centre</th></tr></thead><tbody id="approved"></tbody></table></div></section>
+</main><script>
+(() => {"use strict";
+  const HR="08f2f659-16c2-f111-aaad-000d3a826b69", SUPERIOR="be2d17c3-06c2-f111-aaad-000d3a826b69";
+  const $=id=>document.getElementById(id), xrm=window.parent.Xrm||window.Xrm;
+  const esc=s=>String(s).replaceAll("&","&amp;").replaceAll('"',"&quot;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+  const localDate=new Date(), year=localDate.getFullYear(), month=localDate.getMonth();
+  const localIso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  $("from").value=`${year}-${String(month+1).padStart(2,"0")}-01`;
+  $("to").value=new Date(Date.UTC(year,month+1,0)).toISOString().slice(0,10);
+  let scope="";
+  function rowText(row,key){return row[key+"@OData.Community.Display.V1.FormattedValue"]||row[key]||""}
+  function date(s){return String(s||"").slice(0,10)}
+  function td(tr,s){const el=document.createElement("td");el.textContent=String(s||"");tr.append(el)}
+  function fillTable(id,rows,fields,limit=10){const body=$(id);body.replaceChildren();for(const row of rows.slice(0,limit)){const tr=document.createElement("tr");fields.forEach(fn=>td(tr,fn(row)));body.append(tr)}if(!body.children.length){const tr=document.createElement("tr"),cell=document.createElement("td");cell.colSpan=fields.length;cell.className="empty";cell.textContent="No matching leave requests";tr.append(cell);body.append(tr)}}
+  async function options(table,field,select){let result=await xrm.WebApi.retrieveMultipleRecords(table,`?$select=${field}&$filter=statecode eq 0&$orderby=${field} asc`);for(const row of result.entities){const option=document.createElement("option");option.value=row[table+"id"];option.textContent=row[field];select.append(option)}}
+  function filter(from,to,overlap){if(!from||!to||from>to)throw new Error("Choose a valid From and To date.");let s=overlap
+    ? `<condition attribute="cr2c9_startdate" operator="on-or-before" value="${esc(to)}"/><condition attribute="cr2c9_enddate" operator="on-or-after" value="${esc(from)}"/>`
+    : "";
+    for(const field of ["department","costcentre"]){const id=$(field).value;if(id&&!/^[0-9a-f-]{36}$/i.test(id))throw new Error("Invalid classification filter.");if(id)s+=`<condition attribute="cr2c9_${field}" operator="eq" value="${id}"/>`}
+    return `<filter type="and">${s}</filter>`}
+  function query(status,from,to,overlap,order,count){const condition=status===null?"":`<filter><condition attribute="cr2c9_status" operator="eq" value="${status}"/></filter>`;
+    const team=scope==="superior"?'<link-entity name="cr2c9_superioraccessgrant" from="cr2c9_leaverequest" to="cr2c9_leaverequestid" link-type="inner" alias="assignedgrant"><filter><condition attribute="cr2c9_grantee" operator="eq-userid"/></filter></link-entity>':"";
+    const xml=`<fetch distinct="true" count="${count}"><entity name="cr2c9_leaverequest"><attribute name="cr2c9_leaverequestnumber"/><attribute name="cr2c9_startdate"/><attribute name="cr2c9_enddate"/><attribute name="createdon"/><attribute name="cr2c9_status"/><attribute name="cr2c9_employeename"/><attribute name="cr2c9_department"/><attribute name="cr2c9_costcentre"/><order attribute="${order}" descending="${order==="createdon"}"/>${condition}${filter(from,to,overlap)}${team}</entity></fetch>`;
+    return (async()=>{let options="?fetchXml="+xml,all=[];while(options){const page=await xrm.WebApi.retrieveMultipleRecords("cr2c9_leaverequest",options,count);all.push(...page.entities);options=page.nextLink?new URL(page.nextLink,location.origin).search:""}return all})()}
+  function calendar(rows,from){const selected=new Date(from+"T00:00:00"),first=new Date(selected.getFullYear(),selected.getMonth(),1),grid=$("calendar");grid.replaceChildren();$("calendarTitle").textContent=`Approved leave calendar · ${first.toLocaleString(undefined,{month:"long",year:"numeric"})}`;
+    for(const name of ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]){const c=document.createElement("div");c.className="weekday";c.textContent=name;grid.append(c)}
+    const offset=(first.getDay()+6)%7,begin=new Date(first);begin.setDate(first.getDate()-offset);
+    for(let i=0;i<42;i++){const current=new Date(begin);current.setDate(begin.getDate()+i);const iso=localIso(current);const cell=document.createElement("div");cell.className="day"+(current.getMonth()!==first.getMonth()?" outside":"");const number=document.createElement("b");number.textContent=String(current.getDate());cell.append(number);
+      const onLeave=rows.filter(r=>date(r.cr2c9_startdate)<=iso&&date(r.cr2c9_enddate)>=iso);const people=[...new Map(onLeave.map(r=>[r._cr2c9_employeename_value||r.cr2c9_leaverequestnumber,rowText(r,"_cr2c9_employeename_value")||"Employee"])).values()];if(people.length){const count=document.createElement("div");count.className="day-count";count.textContent=`${people.length} ${people.length===1?"person":"people"} on leave`;cell.append(count);const events=document.createElement("div");events.className="day-events";events.setAttribute("role","list");events.setAttribute("aria-label",`Approved leave on ${iso}`);for(const name of people){const event=document.createElement("span");event.className="event";event.setAttribute("role","listitem");event.textContent=name;event.title=name;events.append(event)}cell.append(events)}grid.append(cell)}}
+  async function load(){const from=$("from").value,to=$("to").value;if(!from||!to||from>to)throw new Error("Choose a valid From and To date.");$("status").textContent="Loading leave information…";$("apply").disabled=true;
+    try{const today=localIso(new Date()),selected=new Date(from+"T00:00:00"),monthStart=localIso(new Date(selected.getFullYear(),selected.getMonth(),1)),monthEnd=localIso(new Date(selected.getFullYear(),selected.getMonth()+1,0));const approvedQuery=query(1,from,to,true,"createdon",500);const calendarQuery=from===monthStart&&to===monthEnd?approvedQuery:query(1,monthStart,monthEnd,true,"createdon",500);const [latest,pending,approved,upcoming,calendarRows]=await Promise.all([query(null,from,to,false,"createdon",100),query(0,from,to,false,"createdon",100),approvedQuery,query(1,today,"2099-12-31",true,"cr2c9_startdate",100),calendarQuery]);
+      const future=upcoming.filter(r=>date(r.cr2c9_startdate)>=today);
+      $("pendingCount").textContent=String(pending.length);$("approvedCount").textContent=String(approved.length);$("upcomingCount").textContent=String(future.length);
+      fillTable("latest",latest,[r=>r.cr2c9_leaverequestnumber,r=>rowText(r,"_cr2c9_employeename_value"),r=>date(r.createdon),r=>rowText(r,"cr2c9_status")]);
+      fillTable("upcoming",future,[r=>rowText(r,"_cr2c9_employeename_value"),r=>`${date(r.cr2c9_startdate)} – ${date(r.cr2c9_enddate)}`,r=>rowText(r,"_cr2c9_department_value"),r=>rowText(r,"_cr2c9_costcentre_value")]);
+      fillTable("approved",approved,[r=>r.cr2c9_leaverequestnumber,r=>rowText(r,"_cr2c9_employeename_value"),r=>`${date(r.cr2c9_startdate)} – ${date(r.cr2c9_enddate)}`,r=>rowText(r,"_cr2c9_department_value"),r=>rowText(r,"_cr2c9_costcentre_value")],Infinity);
+      calendar(calendarRows,from);$("status").textContent=`Showing ${scope==="hr"?"company-wide":"assigned team"} leave for the selected period.`
+    }finally{$("apply").disabled=false}}
+  async function init(){if(!xrm?.Utility||!xrm?.WebApi)throw new Error("Open this dashboard inside the Leave app.");const app=await xrm.Utility.getGlobalContext().getCurrentAppProperties();const id=String(app.appId||"").toLowerCase();scope=id===HR?"hr":id===SUPERIOR?"superior":"";if(!scope)throw new Error("This dashboard is available only in the HR or Superior app.");
+    $("title").textContent=scope==="hr"?"HR leave dashboard":"Superior leave dashboard";$("subtitle").textContent=scope==="hr"?"Company-wide leave and pending actions":"Assigned team leave and pending actions";
+    await Promise.all([options("cr2c9_department","cr2c9_name",$("department")),options("cr2c9_costcentre","cr2c9_name",$("costcentre"))]);await load()}
+  $("apply").addEventListener("click",()=>load().catch(e=>{$("status").className="error";$("status").textContent=e.message}));
+  $("refresh").addEventListener("click",()=>load().catch(e=>{$("status").className="error";$("status").textContent=e.message}));
+  init().catch(e=>{$("status").className="error";$("status").textContent=e.message});
+})();
+</script></body></html>

@@ -72,5 +72,3 @@ For a fresh empty database, run `npm run db:deploy` followed by `npm run db:seed
 PostgreSQL CHECK constraints are maintained in the migration SQL because Prisma schema syntax does not represent them. Preserve them in future SQL migrations. Never reset a database to resolve drift without first reviewing the cause and preserving needed data. Prisma does not provide Laravel-style automatic rollback; use a corrective migration for ordinary schema fixes.
 
 Prisma Client is generated into `app/generated/prisma/` and ignored by Git. `npm install` generates it through the postinstall script, so configure `.env.local` first. Database initialization is in `app/lib/prisma.ts`; business logic stays in `app/api/workspace/route.ts`. Advisory locks still use parameterized SQL inside Prisma transactions.
-# leave-and-claim-system
-# leave-and-claim-system

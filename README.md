@@ -73,3 +73,4 @@ PostgreSQL CHECK constraints are maintained in the migration SQL because Prisma 
 
 Prisma Client is generated into `app/generated/prisma/` and ignored by Git. `npm install` generates it through the postinstall script, so configure `.env.local` first. Database initialization is in `app/lib/prisma.ts`; business logic stays in `app/api/workspace/route.ts`. Advisory locks still use parameterized SQL inside Prisma transactions.
 # leave-and-claim-system
+# leave-and-claim-system

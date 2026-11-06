@@ -10,6 +10,7 @@ import {
 } from "./lib/time";
 import {
   balanceCategory,
+  compassionateRelationships,
   fixedLengthDays,
   leaveCategories,
   scheduleDates,
@@ -82,6 +83,8 @@ function requestFacts(request: Request) {
       : "Expected birth";
   return [
     details.training_category,
+    details.relationship,
+    details.registered_on && `Registered ${dateLabel(details.registered_on)}`,
     details.expected_birth_on &&
       `${expected} ${dateLabel(details.expected_birth_on)}`,
     details.birth_on && `Born ${dateLabel(details.birth_on)}`,
@@ -105,6 +108,10 @@ const leaveHelp: Record<string, string> = {
     "98 consecutive calendar days from the start date. HR assesses eligibility and notice.",
   "Paternity leave":
     "7 consecutive calendar days starting on the birth date. Requires 12 months of service; HR verifies the birth date before approving.",
+  "Marriage leave":
+    "3 consecutive calendar days for your first legal marriage, after registration and within 12 months of it. Attach the marriage certificate; probation must be complete.",
+  "Compassionate leave":
+    "3 consecutive calendar days for a close family member. Attach a supporting document: HR cannot approve without it.",
   "Unpaid leave":
     "Weekends excluded. Unpaid leave does not use any paid balance.",
 };
@@ -502,6 +509,9 @@ export default function Home() {
         birth_on: data.get("birth_on"),
         notified_on: data.get("notified_on"),
         training_category: data.get("training_category"),
+        registered_on: data.get("registered_on"),
+        first_marriage: data.get("first_marriage") === "on",
+        relationship: data.get("relationship"),
       });
       let note = "";
       if (documentFile instanceof File && documentFile.size > 0)
@@ -1765,7 +1775,32 @@ export default function Home() {
                       </select>
                     </label>
                   )}
-                  {fixedDays && (
+                  {leaveCategory === "Marriage leave" && (
+                    <>
+                      <label>
+                        Official marriage registration date
+                        <input name="registered_on" type="date" required />
+                      </label>
+                      <label className="checkbox-field">
+                        <input name="first_marriage" type="checkbox" required />
+                        I declare this is my first legal marriage.
+                      </label>
+                    </>
+                  )}
+                  {leaveCategory === "Compassionate leave" && (
+                    <label>
+                      Relationship
+                      <select name="relationship" defaultValue="" required>
+                        <option value="">Choose a relationship</option>
+                        {compassionateRelationships.map((option) => (
+                          <option key={option}>{option}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {["Maternity leave", "Paternity leave"].includes(
+                    leaveCategory,
+                  ) && (
                     <div className="form-row">
                       <label>
                         {leaveCategory === "Maternity leave"

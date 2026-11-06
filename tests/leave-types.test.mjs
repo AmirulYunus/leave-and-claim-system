@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  addMonths,
   approvalProblem,
   balanceCategory,
   medicalSubmissionProblem,
   scheduleDates,
   scheduleProblem,
   submissionProblem,
-  subtractMonths,
 } from "../app/lib/leave-types.ts";
 
 const none = {
@@ -15,10 +15,25 @@ const none = {
   birth_on: null,
   notified_on: null,
   training_category: null,
+  registered_on: null,
+  first_marriage: null,
+  relationship: null,
 };
 const fullDays = (dates) => dates.map((date) => ({ date, hours: 8 }));
+const submit = (category, details, start = "2026-11-02", end = start) =>
+  submissionProblem(category, { ...none, ...details }, start, end);
+const approval = {
+  details: none,
+  start: "2026-11-02",
+  end: "2026-11-02",
+  joinDate: "2024-01-01",
+  probationCompletedOn: "2024-04-01",
+  attachments: 0,
+  priorBirths: [],
+  priorMarriages: 0,
+};
 
-test("maternity and paternity cover fixed consecutive calendar days", () => {
+test("fixed-length leave covers consecutive calendar days", () => {
   const maternity = scheduleDates("Maternity leave", "2027-02-01", "");
   assert.equal(maternity.length, 98);
   assert.equal(maternity.at(-1), "2027-05-09");
@@ -32,6 +47,12 @@ test("maternity and paternity cover fixed consecutive calendar days", () => {
     "2026-11-11",
     "2026-11-12",
   ]);
+  for (const category of ["Marriage leave", "Compassionate leave"])
+    assert.deepEqual(scheduleDates(category, "2026-11-06", ""), [
+      "2026-11-06",
+      "2026-11-07",
+      "2026-11-08",
+    ]);
   assert.equal(scheduleProblem("Paternity leave", fullDays(paternity)), "");
   assert.notEqual(
     scheduleProblem("Paternity leave", fullDays(paternity.slice(1))),
@@ -89,46 +110,66 @@ test("weekday leave uses every weekday with one 4 or 8 hour duration", () => {
 });
 
 test("submission details are required per category", () => {
-  assert.notEqual(submissionProblem("Maternity leave", none), "");
+  assert.notEqual(submit("Maternity leave", {}), "");
   assert.equal(
-    submissionProblem("Maternity leave", {
-      ...none,
+    submit("Maternity leave", {
       expected_birth_on: "2027-02-20",
       notified_on: "2026-12-01",
     }),
     "",
   );
-  assert.notEqual(
-    submissionProblem("Paternity leave", {
-      ...none,
-      notified_on: "2026-11-01",
-    }),
-    "",
-  );
+  assert.notEqual(submit("Paternity leave", { notified_on: "2026-11-01" }), "");
   assert.equal(
-    submissionProblem("Paternity leave", {
-      ...none,
+    submit("Paternity leave", {
       notified_on: "2026-11-01",
       expected_birth_on: "2026-11-06",
     }),
     "",
   );
-  assert.notEqual(submissionProblem("Training leave", none), "");
-  assert.notEqual(
-    submissionProblem("Training leave", {
-      ...none,
-      training_category: "Other",
-    }),
-    "",
-  );
+  assert.notEqual(submit("Training leave", {}), "");
+  assert.notEqual(submit("Training leave", { training_category: "Other" }), "");
   assert.equal(
-    submissionProblem("Training leave", {
-      ...none,
-      training_category: "Company Required",
-    }),
+    submit("Training leave", { training_category: "Company Required" }),
     "",
   );
-  assert.equal(submissionProblem("Emergency leave", none), "");
+  assert.equal(submit("Emergency leave", {}), "");
+});
+
+test("marriage leave falls after registration and within twelve months", () => {
+  const first = { registered_on: "2026-05-01", first_marriage: true };
+  assert.notEqual(submit("Marriage leave", {}, "2026-05-02", "2026-05-04"), "");
+  assert.notEqual(
+    submit(
+      "Marriage leave",
+      { ...first, first_marriage: false },
+      "2026-05-02",
+      "2026-05-04",
+    ),
+    "",
+    "not declared a first marriage",
+  );
+  assert.equal(submit("Marriage leave", first, "2026-05-01", "2026-05-03"), "");
+  assert.equal(submit("Marriage leave", first, "2027-04-28", "2027-04-30"), "");
+  assert.notEqual(
+    submit("Marriage leave", first, "2026-04-30", "2026-05-02"),
+    "",
+    "before registration",
+  );
+  assert.notEqual(
+    submit("Marriage leave", first, "2027-04-29", "2027-05-01"),
+    "",
+    "ends twelve months after registration",
+  );
+});
+
+test("compassionate leave needs an eligible relationship", () => {
+  assert.notEqual(submit("Compassionate leave", {}), "");
+  assert.notEqual(
+    submit("Compassionate leave", { relationship: "Cousin" }),
+    "",
+  );
+  for (const relationship of ["Spouse", "Sibling", "Legal guardian"])
+    assert.equal(submit("Compassionate leave", { relationship }), "");
 });
 
 test("emergency and external training are charged to annual leave", () => {
@@ -138,31 +179,58 @@ test("emergency and external training are charged to annual leave", () => {
     "Annual leave",
   );
   assert.equal(balanceCategory("Training leave", "Company Required"), null);
-  for (const category of ["Maternity leave", "Paternity leave", "Unpaid leave"])
+  for (const category of [
+    "Maternity leave",
+    "Paternity leave",
+    "Marriage leave",
+    "Compassionate leave",
+    "Unpaid leave",
+  ])
     assert.equal(balanceCategory(category, null), null);
   assert.equal(balanceCategory("Medical leave", null), "Medical leave");
 });
 
-test("medical, hospitalisation and emergency approval need a document", () => {
-  const input = {
-    details: none,
-    start: "2026-11-02",
-    joinDate: "2024-01-01",
-    priorBirths: [],
-  };
-  for (const category of [
-    "Medical leave",
-    "Hospitalisation leave",
-    "Emergency leave",
-  ]) {
-    assert.notEqual(
-      approvalProblem(category, { ...input, attachments: 0 }),
+test("approval needs a document for evidence-based categories", () => {
+  const cases = [
+    ["Medical leave", {}],
+    ["Hospitalisation leave", {}],
+    ["Emergency leave", {}],
+    ["Compassionate leave", { relationship: "Child" }],
+    ["Marriage leave", { registered_on: "2026-11-01", first_marriage: true }],
+  ];
+  for (const [category, details] of cases) {
+    const input = { ...approval, details: { ...none, ...details } };
+    assert.notEqual(approvalProblem(category, input), "", category);
+    assert.equal(
+      approvalProblem(category, { ...input, attachments: 1 }),
       "",
+      category,
     );
-    assert.equal(approvalProblem(category, { ...input, attachments: 1 }), "");
   }
-  assert.equal(
-    approvalProblem("Annual leave", { ...input, attachments: 0 }),
+  assert.equal(approvalProblem("Annual leave", approval), "");
+});
+
+test("marriage approval needs completed probation and no earlier approval", () => {
+  const input = {
+    ...approval,
+    details: { ...none, registered_on: "2026-11-01", first_marriage: true },
+    attachments: 1,
+  };
+  assert.equal(approvalProblem("Marriage leave", input), "");
+  assert.notEqual(
+    approvalProblem("Marriage leave", { ...input, probationCompletedOn: null }),
+    "",
+  );
+  assert.notEqual(
+    approvalProblem("Marriage leave", {
+      ...input,
+      probationCompletedOn: "2026-11-03",
+    }),
+    "",
+    "probation completes after the leave starts",
+  );
+  assert.notEqual(
+    approvalProblem("Marriage leave", { ...input, priorMarriages: 1 }),
     "",
   );
 });
@@ -189,11 +257,11 @@ test("paternity approval checks birth date, service and earlier births", () => {
     birth_on: "2026-11-06",
   };
   const input = {
+    ...approval,
     details,
     start: "2026-11-06",
+    end: "2026-11-12",
     joinDate: "2025-11-06",
-    attachments: 0,
-    priorBirths: [],
   };
   assert.equal(approvalProblem("Paternity leave", input), "");
   assert.notEqual(
@@ -236,8 +304,10 @@ test("paternity approval checks birth date, service and earlier births", () => {
   );
 });
 
-test("twelve months back clamps to the end of a shorter month", () => {
-  assert.equal(subtractMonths("2026-11-06", 12), "2025-11-06");
-  assert.equal(subtractMonths("2028-02-29", 12), "2027-02-28");
-  assert.equal(subtractMonths("2026-03-31", 1), "2026-02-28");
+test("month arithmetic clamps to the end of a shorter month", () => {
+  assert.equal(addMonths("2026-11-06", -12), "2025-11-06");
+  assert.equal(addMonths("2028-02-29", -12), "2027-02-28");
+  assert.equal(addMonths("2026-03-31", -1), "2026-02-28");
+  assert.equal(addMonths("2026-05-01", 12), "2027-05-01");
+  assert.equal(addMonths("2028-02-29", 12), "2029-02-28");
 });

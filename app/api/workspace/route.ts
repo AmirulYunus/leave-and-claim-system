@@ -132,28 +132,42 @@ function leaveDetails(category: string, input: Record<string, unknown>) {
       typeof input.training_category === "string"
         ? input.training_category
         : null,
+    registered_on:
+      category === "Marriage leave" ? optionalDate(input.registered_on) : null,
+    first_marriage:
+      category === "Marriage leave" ? input.first_marriage === true : null,
+    relationship:
+      category === "Compassionate leave" &&
+      typeof input.relationship === "string"
+        ? input.relationship
+        : null,
   };
 }
+const optionalIso = (date: Date | null) => (date ? isoDate(date) : null);
+const optionalDb = (date: string | null) => (date ? dbDate(date) : null);
 const storedDetails = (request: {
   expected_birth_on: Date | null;
   birth_on: Date | null;
   notified_on: Date | null;
   training_category: string | null;
+  registered_on: Date | null;
+  first_marriage: boolean | null;
+  relationship: string | null;
 }): LeaveDetails => ({
-  expected_birth_on: request.expected_birth_on
-    ? isoDate(request.expected_birth_on)
-    : null,
-  birth_on: request.birth_on ? isoDate(request.birth_on) : null,
-  notified_on: request.notified_on ? isoDate(request.notified_on) : null,
+  expected_birth_on: optionalIso(request.expected_birth_on),
+  birth_on: optionalIso(request.birth_on),
+  notified_on: optionalIso(request.notified_on),
   training_category: request.training_category,
+  registered_on: optionalIso(request.registered_on),
+  first_marriage: request.first_marriage,
+  relationship: request.relationship,
 });
 const detailData = (details: LeaveDetails) => ({
-  expected_birth_on: details.expected_birth_on
-    ? dbDate(details.expected_birth_on)
-    : null,
-  birth_on: details.birth_on ? dbDate(details.birth_on) : null,
-  notified_on: details.notified_on ? dbDate(details.notified_on) : null,
-  training_category: details.training_category,
+  ...details,
+  expected_birth_on: optionalDb(details.expected_birth_on),
+  birth_on: optionalDb(details.birth_on),
+  notified_on: optionalDb(details.notified_on),
+  registered_on: optionalDb(details.registered_on),
 });
 
 // New requests that use a yearly balance (or are recorded per weekday) must
@@ -184,15 +198,18 @@ async function validateLeaveEntries(
     throw new ValidationError("Use valid calendar dates.");
   const schedule = scheduleProblem(category, entries);
   if (schedule) throw new ValidationError(schedule);
+  const sorted = entries.map((entry) => entry.date).sort();
   if (submitting) {
-    const problem = submissionProblem(category, details);
+    const problem = submissionProblem(
+      category,
+      details,
+      sorted[0],
+      sorted.at(-1)!,
+    );
     if (problem) throw new ValidationError(problem);
   }
   if (category === "Medical leave") {
-    const late = medicalSubmissionProblem(
-      entries.map((entry) => entry.date).sort()[0],
-      submittedAt,
-    );
+    const late = medicalSubmissionProblem(sorted[0], submittedAt);
     if (late) throw new ValidationError(late);
   }
   const today = malaysiaDate();
@@ -514,12 +531,29 @@ export async function PATCH(request: Request) {
                 prior.birth_on ? isoDate(prior.birth_on) : null,
               )
             : [];
+        const priorMarriages =
+          target.category === "Marriage leave"
+            ? await tx.requests.count({
+                where: {
+                  employee_id: target.employee_id,
+                  category: "Marriage leave",
+                  status: "Approved",
+                  id: { not: target.id },
+                },
+              })
+            : 0;
+        const dates = entries.map((entry) => entry.date).sort();
         const problem = approvalProblem(target.category, {
           details,
-          start: entries.map((entry) => entry.date).sort()[0],
+          start: dates[0],
+          end: dates.at(-1)!,
           joinDate: isoDate(target.employee.join_date),
+          probationCompletedOn: target.employee.probation_completed_on
+            ? isoDate(target.employee.probation_completed_on)
+            : null,
           attachments: target._count.attachments,
           priorBirths,
+          priorMarriages,
         });
         if (problem) throw new ValidationError(problem);
         await validateLeaveEntries(

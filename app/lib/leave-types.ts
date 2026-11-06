@@ -13,11 +13,22 @@ export const leaveCategories = [
   "Training leave",
   "Maternity leave",
   "Paternity leave",
+  "Marriage leave",
+  "Compassionate leave",
   "Unpaid leave",
 ] as const;
 export const trainingCategories = [
   "Company Required",
   "Employee-Requested External",
+] as const;
+export const compassionateRelationships = [
+  "Spouse",
+  "Child",
+  "Natural parent",
+  "Sibling",
+  "Grandparent",
+  "Parent-in-law",
+  "Legal guardian",
 ] as const;
 
 // Consecutive calendar-day categories and their fixed length in days, taken
@@ -26,6 +37,8 @@ export const trainingCategories = [
 export const fixedLengthDays: Record<string, number> = {
   "Maternity leave": 98,
   "Paternity leave": 7,
+  "Marriage leave": 3,
+  "Compassionate leave": 3,
 };
 
 export type LeaveDetails = {
@@ -33,6 +46,9 @@ export type LeaveDetails = {
   birth_on: string | null;
   notified_on: string | null;
   training_category: string | null;
+  registered_on: string | null;
+  first_marriage: boolean | null;
+  relationship: string | null;
 };
 
 export const isFixedLength = (category: string) => category in fixedLengthDays;
@@ -63,10 +79,11 @@ export function addDays(date: string, days: number) {
     .slice(0, 10);
 }
 
-// The same calendar date `months` earlier, clamped to the month's last day.
-export function subtractMonths(date: string, months: number) {
+// The same calendar date `months` later (or earlier when negative), clamped to
+// the last day of a shorter month.
+export function addMonths(date: string, months: number) {
   const [year, month, day] = date.split("-").map(Number);
-  const target = new Date(Date.UTC(year, month - 1 - months, 1));
+  const target = new Date(Date.UTC(year, month - 1 + months, 1));
   const last = new Date(
     Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0),
   ).getUTCDate();
@@ -109,8 +126,14 @@ export function scheduleProblem(category: string, entries: LeaveEntry[]) {
   return "";
 }
 
-// Details required when the employee submits.
-export function submissionProblem(category: string, details: LeaveDetails) {
+// Details required when the employee submits. `start` and `end` are the first
+// and last leave dates.
+export function submissionProblem(
+  category: string,
+  details: LeaveDetails,
+  start: string,
+  end: string,
+) {
   if (
     category === "Maternity leave" &&
     (!details.expected_birth_on || !details.notified_on)
@@ -126,6 +149,21 @@ export function submissionProblem(category: string, details: LeaveDetails) {
     !trainingCategories.some((option) => option === details.training_category)
   )
     return "Choose whether the training is company-required or employee-requested external training.";
+  if (category === "Marriage leave") {
+    const registered = details.registered_on;
+    if (!registered) return "Enter the official marriage registration date.";
+    if (details.first_marriage !== true)
+      return "Marriage leave is available only for your first legal marriage. Confirm the declaration before submitting.";
+    if (start < registered || end >= addMonths(registered, 12))
+      return "Take all three Marriage leave days after registration and within twelve months of the official registration date.";
+  }
+  if (
+    category === "Compassionate leave" &&
+    !compassionateRelationships.some(
+      (option) => option === details.relationship,
+    )
+  )
+    return "Choose an eligible relationship for Compassionate leave: spouse, child, natural parent, sibling, grandparent, parent-in-law or legal guardian.";
   return "";
 }
 
@@ -147,6 +185,10 @@ const evidenceRequired: Record<string, string> = {
     "Upload a medical certificate before Hospitalisation leave can be approved. HR must verify the certificate.",
   "Emergency leave":
     "Emergency leave needs supporting evidence before approval. HR must verify it.",
+  "Marriage leave":
+    "Upload the marriage certificate before approval. HR must verify the certificate and the first-marriage declaration.",
+  "Compassionate leave":
+    "Upload a supporting document before approving Compassionate leave. HR must verify it.",
 };
 
 // Rules HR's approval must satisfy beyond the submission rules. The
@@ -156,20 +198,34 @@ export function approvalProblem(
   input: {
     details: LeaveDetails;
     start: string;
+    end: string;
     joinDate: string;
+    probationCompletedOn: string | null;
     attachments: number;
     priorBirths: (string | null)[];
+    priorMarriages: number;
   },
 ) {
-  const submitted = submissionProblem(category, input.details);
+  const submitted = submissionProblem(
+    category,
+    input.details,
+    input.start,
+    input.end,
+  );
   if (submitted) return submitted;
+  if (category === "Marriage leave") {
+    if (!input.probationCompletedOn || input.probationCompletedOn > input.start)
+      return "HR must record a probation completion date on or before Marriage leave starts.";
+    if (input.priorMarriages > 0)
+      return "Marriage leave was already approved for this employee's first legal marriage.";
+  }
   if (evidenceRequired[category] && input.attachments < 1)
     return evidenceRequired[category];
   if (category !== "Paternity leave") return "";
   const birth = input.details.birth_on;
   if (!birth || birth !== input.start)
     return "Paternity leave must start on the verified birth date.";
-  if (input.joinDate > subtractMonths(input.start, 12))
+  if (input.joinDate > addMonths(input.start, -12))
     return "Paternity leave requires at least 12 months of continuous service before it starts; check the join date.";
   // A prior approval without a recorded birth date counts as a separate birth.
   const known = new Set(input.priorBirths.filter(Boolean));

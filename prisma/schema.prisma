@@ -117,6 +117,11 @@ model requests {
   notified_on       DateTime?       @db.Date
   /// Company Required or Employee-Requested External.
   training_category String?
+  /// Official marriage registration date and first-legal-marriage declaration.
+  registered_on     DateTime?       @db.Date
+  first_marriage    Boolean?
+  /// Compassionate leave relationship; enforced by a CHECK constraint.
+  relationship      String?
   claims            claims?
   leave_entries     leave_entries[]
   attachments       attachments[]

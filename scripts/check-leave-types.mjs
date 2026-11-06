@@ -72,6 +72,7 @@ try {
       join_date: `${year - 3}-01-01`,
       employment_type: "Full-time",
       employee_level: 1,
+      probation_completed_on: `${year - 3}-04-01`,
       temporary_password: "temporary-pass-1",
     },
     201,
@@ -261,12 +262,67 @@ try {
     await decide(medicalId);
   }
 
+  // Marriage: first legal marriage, within 12 months of registration,
+  // certificate before approval, approved once only.
+  const marriage = calendarDays(`${year}-05-02`, 3);
+  const married = { registered_on: `${year}-05-01` };
+  await api(
+    "workspace",
+    "Tester",
+    "POST",
+    leave("Marriage leave", marriage, 8, married),
+    400,
+  );
+  const { id: marriageId } = await api(
+    "workspace",
+    "Tester",
+    "POST",
+    leave("Marriage leave", marriage, 8, { ...married, first_marriage: true }),
+    201,
+  );
+  await decide(marriageId, {}, 400);
+  await upload("Tester", marriageId, "certificate.pdf", pdf);
+  await decide(marriageId);
+  const { id: secondId } = await api(
+    "workspace",
+    "Tester",
+    "POST",
+    leave("Marriage leave", calendarDays(`${year}-05-10`, 3), 8, {
+      ...married,
+      first_marriage: true,
+    }),
+    201,
+  );
+  await upload("Tester", secondId, "certificate.pdf", pdf);
+  const repeat = await decide(secondId, {}, 400);
+  assert.match(repeat.error, /already approved/);
+
+  // Compassionate: an eligible relationship and a supporting document.
+  const compassionate = calendarDays(`${year}-06-01`, 3);
+  await api(
+    "workspace",
+    "Tester",
+    "POST",
+    leave("Compassionate leave", compassionate, 8, { relationship: "Cousin" }),
+    400,
+  );
+  const { id: compassionateId } = await api(
+    "workspace",
+    "Tester",
+    "POST",
+    leave("Compassionate leave", compassionate, 8, { relationship: "Sibling" }),
+    201,
+  );
+  await decide(compassionateId, {}, 400);
+  await upload("Tester", compassionateId, "notice.pdf", pdf);
+  await decide(compassionateId);
+
   const saved = (await api("workspace", "Tester")).requests.find(
     (request) => request.id === paternityId,
   );
   assert.equal(saved.details.birth_on, paternity[0]);
   console.log(
-    "PASS: maternity and paternity rules, training categories and Annual charging, emergency and medical evidence, the 48-hour medical rule, and document access.",
+    "PASS: maternity, paternity, marriage and compassionate rules, training categories and Annual charging, emergency and medical evidence, the 48-hour medical rule, and document access.",
   );
 } catch (error) {
   console.error(error.message);

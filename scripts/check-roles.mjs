@@ -211,13 +211,43 @@ try {
   );
   assert.equal((await api("workspace", "HR")).employee.role, "HR");
   assert.equal((await api("workspace", "Admin")).employee.role, "Admin");
+
+  await api(
+    "workspace",
+    "HR",
+    "POST",
+    {
+      kind: "Claim",
+      category: "Travel",
+      detail: "Self-approval check",
+      note: prefix,
+      value: 12.5,
+    },
+    201,
+  );
+  const own = (await api("workspace", "HR")).requests.find(
+    (request) => request.note === prefix,
+  );
+  await api(
+    "workspace",
+    "HR",
+    "PATCH",
+    { id: own.id, status: "Approved" },
+    403,
+  );
+  await api("workspace", "Admin", "PATCH", { id: own.id, status: "Approved" });
   console.log(
-    "PASS: sign-in required; temporary passwords must be changed and can be reset; Employee access denied; HR creates Employee and HR profiles, edits Employee profiles and employment details, maintains departments and cost centres, and cannot create Admin or assign roles; Admin creates and assigns roles; requests scoped by employee ID.",
+    "PASS: sign-in required; temporary passwords must be changed and can be reset; Employee access denied; HR creates Employee and HR profiles, edits Employee profiles and employment details, maintains departments and cost centres, and cannot create Admin or assign roles; Admin creates and assigns roles; requests scoped by employee ID; nobody decides their own request.",
   );
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
 } finally {
+  await client.query(
+    "DELETE FROM claims WHERE request_id IN (SELECT id FROM requests WHERE note = $1)",
+    [prefix],
+  );
+  await client.query("DELETE FROM requests WHERE note = $1", [prefix]);
   await client.query("DELETE FROM employees WHERE email = ANY($1::text[])", [
     createdEmails,
   ]);

@@ -1104,7 +1104,12 @@ export default function Home() {
                         </td>
                         {view === "HR approvals" && (
                           <td>
-                            {request.status === "Pending" ? (
+                            {request.status === "Pending" &&
+                            request.employee_id === employee.id ? (
+                              <span className="reviewed">
+                                Another reviewer decides
+                              </span>
+                            ) : request.status === "Pending" ? (
                               <div className="decision-buttons">
                                 <button
                                   disabled={busy}

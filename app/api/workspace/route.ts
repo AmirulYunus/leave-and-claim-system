@@ -328,6 +328,14 @@ export async function PATCH(request: Request) {
         throw new ValidationError(
           "This request has already been reviewed. Refresh to see its status.",
         );
+      if (target.employee_id === reviewer.id)
+        return Response.json(
+          {
+            error:
+              "You cannot decide your own request. Another HR member or Admin must review it.",
+          },
+          { status: 403 },
+        );
       if (
         ["Medical leave", "Hospitalisation leave"].includes(target.category) &&
         input.medicalVerified !== true

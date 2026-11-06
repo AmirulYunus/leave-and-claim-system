@@ -9,6 +9,14 @@ import {
   type LeaveEntry,
 } from "./lib/time";
 import {
+  balanceCategory,
+  fixedLengthDays,
+  leaveCategories,
+  scheduleDates,
+  trainingCategories,
+  type LeaveDetails,
+} from "./lib/leave-types";
+import {
   employeeLevels,
   employmentTypes,
   type EmploymentDetails,
@@ -61,6 +69,45 @@ type Request = {
   status: "Pending" | "Approved" | "Rejected";
   note: string;
   entries?: LeaveEntry[];
+  details?: LeaveDetails;
+  attachments?: { id: number; file_name: string; size_bytes: number }[];
+};
+const uniformDurationCategories = ["Emergency leave", "Training leave"];
+// Category details shown under a request, e.g. birth and notice dates.
+function requestFacts(request: Request) {
+  const details = request.details;
+  if (!details) return "";
+  const expected =
+    request.category === "Maternity leave"
+      ? "Expected confinement"
+      : "Expected birth";
+  return [
+    details.training_category,
+    details.expected_birth_on &&
+      `${expected} ${dateLabel(details.expected_birth_on)}`,
+    details.birth_on && `Born ${dateLabel(details.birth_on)}`,
+    details.notified_on && `Notice ${dateLabel(details.notified_on)}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+const leaveHelp: Record<string, string> = {
+  "Annual leave":
+    "Weekends excluded · Choose any positive number of hours, up to 8 per working day. 8 hours = 1 day. Company public holidays are not configured yet.",
+  "Medical leave":
+    "Medical leave follows certificate dates in full days. HR must verify certification and eligibility.",
+  "Hospitalisation leave":
+    "Hospitalisation leave follows certificate dates in full days. HR must verify certification and eligibility.",
+  "Emergency leave":
+    "For unexpected emergencies; you may apply after the leave. Upload supporting evidence: HR cannot approve without it. Approved hours are charged to Annual Leave.",
+  "Training leave":
+    "Company-required training is not charged. Employee-requested external training is charged to Annual Leave.",
+  "Maternity leave":
+    "98 consecutive calendar days from the start date. HR assesses eligibility and notice.",
+  "Paternity leave":
+    "7 consecutive calendar days starting on the birth date. Requires 12 months of service; HR verifies the birth date before approving.",
+  "Unpaid leave":
+    "Weekends excluded. Unpaid leave does not use any paid balance.",
 };
 const money = (value: number) => `RM ${value.toFixed(2)}`;
 const dateLabel = (value: string) =>
@@ -199,12 +246,23 @@ export default function Home() {
   const [endDate, setEndDate] = useState("");
   const [leaveCategory, setLeaveCategory] = useState("Annual leave");
   const [leaveHours, setLeaveHours] = useState<Record<string, string>>({});
+  const [uniformHours, setUniformHours] = useState("8");
+  const [trainingCategory, setTrainingCategory] = useState("");
   const isMedical =
     leaveCategory === "Medical leave" ||
     leaveCategory === "Hospitalisation leave";
-  const leaveDates = datesBetween(startDate, endDate).filter(
-    (date) => isMedical || isWeekday(date),
-  );
+  const fixedDays = fixedLengthDays[leaveCategory];
+  const uniformDuration = uniformDurationCategories.includes(leaveCategory);
+  const leaveDates = startDate
+    ? scheduleDates(leaveCategory, startDate, endDate)
+    : [];
+  const leaveEnd = fixedDays ? (leaveDates.at(-1) ?? "") : endDate;
+  const hoursFor = (date: string) =>
+    isMedical || fixedDays
+      ? 8
+      : uniformDuration
+        ? Number(uniformHours)
+        : Number(leaveHours[date] ?? "8");
   const monthDates = month
     ? datesBetween(
         `${month}-01`,
@@ -215,13 +273,17 @@ export default function Home() {
     (request) => request.employee_id === employee.id,
   );
   const pending = requests.filter((request) => request.status === "Pending");
-  // Hours of a category this year in requests with one of the given statuses.
-  const usedHours = (category: string, statuses: Request["status"][]) =>
+  // Hours charged to a balance this year by requests with the given statuses.
+  // Emergency and external training leave are charged to Annual Leave.
+  const usedHours = (balance: string, statuses: Request["status"][]) =>
     mine
       .filter(
         (request) =>
           request.kind === "Leave" &&
-          request.category === category &&
+          balanceCategory(
+            request.category,
+            request.details?.training_category ?? null,
+          ) === balance &&
           statuses.includes(request.status),
       )
       .flatMap((request) => request.entries ?? [])
@@ -311,6 +373,33 @@ export default function Home() {
     const data = await response.json();
     if (response.status === 401) setAuth("signedOut");
     if (!response.ok) throw new Error(data.error);
+    return data;
+  }
+  async function uploadDocument(requestId: number, file: File) {
+    const form = new FormData();
+    form.set("request_id", String(requestId));
+    form.set("file", file);
+    const response = await fetch("/api/attachments", {
+      method: "POST",
+      body: form,
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+  }
+  async function attachDocument(requestId: number, file: File | undefined) {
+    if (busy || !file) return;
+    setBusy(true);
+    try {
+      await uploadDocument(requestId, file);
+      await refresh();
+      setMessage("Document attached.");
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error ? error.message : "Could not attach document.",
+      );
+    } finally {
+      setBusy(false);
+    }
   }
   async function signOut() {
     if (busy) return;
@@ -352,22 +441,21 @@ export default function Home() {
     const category = String(data.get("category"));
     let value = Number(data.get("amount"));
     let detail = String(data.get("description") || "");
+    const entries = leaveDates.map((date) => ({ date, hours: hoursFor(date) }));
+    const documentFile = data.get("document");
     if (modal === "Leave") {
-      const entries = leaveDates.map((date) => ({
-        date,
-        hours: isMedical ? 8 : Number(leaveHours[date] ?? "8"),
-      }));
-      if (startDate.slice(0, 4) !== endDate.slice(0, 4)) {
+      if (!fixedDays && startDate.slice(0, 4) !== endDate.slice(0, 4)) {
         setError("Submit separate requests for each calendar year.");
         return;
       }
-      if (startDate.slice(0, 4) !== String(entitlements?.year)) {
+      if (!fixedDays && startDate.slice(0, 4) !== String(entitlements?.year)) {
         setError(
           `Leave can be requested for ${entitlements?.year} dates only.`,
         );
         return;
       }
-      const allowance = allowanceFor(category);
+      const balance = balanceCategory(category, trainingCategory || null);
+      const allowance = balance ? allowanceFor(balance) : undefined;
       if (allowance && allowance.hours === null) {
         setError(`${category} is unavailable: ${allowance.reason}`);
         return;
@@ -378,8 +466,9 @@ export default function Home() {
       const validation = validateLeave(
         entries,
         existing,
-        (allowance?.hours ?? Infinity) -
-          usedHours(category, ["Pending", "Approved"]),
+        balance && allowance?.hours != null
+          ? allowance.hours - usedHours(balance, ["Pending", "Approved"])
+          : Infinity,
       );
       if (validation) {
         setError(validation);
@@ -402,30 +491,33 @@ export default function Home() {
         return;
       }
       value = entries.reduce((sum, e) => sum + e.hours, 0) / 8;
-      detail = `${dateLabel(startDate)} – ${dateLabel(endDate)}`;
+      detail = `${dateLabel(startDate)} – ${dateLabel(leaveEnd)}`;
     } else if (!Number.isFinite(value) || value <= 0) {
       setError("Enter a claim amount greater than zero.");
       return;
     }
     setBusy(true);
     try {
-      await persist("POST", {
+      const saved = await persist("POST", {
         kind: modal,
         category,
         detail,
         value,
         note: String(data.get("note")),
-        entries:
-          modal === "Leave"
-            ? leaveDates.map((date) => ({
-                date,
-                hours: isMedical ? 8 : Number(leaveHours[date] ?? "8"),
-              }))
-            : [],
+        entries: modal === "Leave" ? entries : [],
+        expected_birth_on: data.get("expected_birth_on"),
+        birth_on: data.get("birth_on"),
+        notified_on: data.get("notified_on"),
+        training_category: data.get("training_category"),
       });
+      let note = "";
+      if (documentFile instanceof File && documentFile.size > 0)
+        await uploadDocument(saved.id, documentFile).catch((error) => {
+          note = ` The document was not attached: ${error.message} Attach it from the request list.`;
+        });
       await refresh();
       setMessage(
-        `${modal === "Leave" ? "Leave request" : "Claim"} saved for HR review.`,
+        `${modal === "Leave" ? "Leave request" : "Claim"} saved for HR review.${note}`,
       );
       setModal(null);
       setError("");
@@ -457,9 +549,21 @@ export default function Home() {
       !medicalVerified
     )
       return;
+    let birth_on: string | null | undefined;
+    if (
+      target.category === "Paternity leave" &&
+      status === "Approved" &&
+      !target.details?.birth_on
+    ) {
+      birth_on = window.prompt(
+        "Enter the verified birth date (YYYY-MM-DD). Paternity leave must start on it.",
+        target.details?.expected_birth_on ?? "",
+      );
+      if (!birth_on) return;
+    }
     setBusy(true);
     try {
-      await persist("PATCH", { id, status, medicalVerified });
+      await persist("PATCH", { id, status, medicalVerified, birth_on });
       await refresh();
       setMessage(`Request ${status.toLowerCase()} and saved.`);
     } catch (error) {
@@ -567,6 +671,8 @@ export default function Home() {
     setStartDate("");
     setEndDate("");
     setLeaveHours({});
+    setUniformHours("8");
+    setTrainingCategory("");
     setLeaveCategory("Annual leave");
     setModal(kind);
   }
@@ -1149,6 +1255,40 @@ export default function Home() {
                         <td>
                           <span>{request.detail}</span>
                           <small className="request-note">{request.note}</small>
+                          {requestFacts(request) && (
+                            <small className="request-note">
+                              {requestFacts(request)}
+                            </small>
+                          )}
+                          {request.attachments?.map((file) => (
+                            <a
+                              key={file.id}
+                              className="request-document"
+                              href={`/api/attachments/${file.id}`}
+                            >
+                              {file.file_name}
+                            </a>
+                          ))}
+                          {request.kind === "Leave" &&
+                            request.status === "Pending" &&
+                            request.employee_id === employee.id && (
+                              <label className="request-document">
+                                Attach document
+                                <input
+                                  type="file"
+                                  className="sr-only"
+                                  accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                                  disabled={busy}
+                                  onChange={(e) => {
+                                    void attachDocument(
+                                      request.id,
+                                      e.currentTarget.files?.[0],
+                                    );
+                                    e.currentTarget.value = "";
+                                  }}
+                                />
+                              </label>
+                            )}
                         </td>
                         <td className="amount">
                           {request.kind === "Leave"
@@ -1588,12 +1728,7 @@ export default function Home() {
                   }}
                 >
                   {(modal === "Leave"
-                    ? [
-                        "Annual leave",
-                        "Medical leave",
-                        "Hospitalisation leave",
-                        "Unpaid leave",
-                      ]
+                    ? leaveCategories
                     : ["Travel", "Meals", "Office supplies", "Other"]
                   ).map((category) => (
                     <option key={category}>{category}</option>
@@ -1623,7 +1758,8 @@ export default function Home() {
                         name="end"
                         type="date"
                         min={startDate}
-                        value={endDate}
+                        value={leaveEnd}
+                        readOnly={Boolean(fixedDays)}
                         onInput={(e) => {
                           setEndDate(e.currentTarget.value);
                           setLeaveHours({});
@@ -1632,12 +1768,68 @@ export default function Home() {
                       />
                     </label>
                   </div>
-                  <p className="field-help">
-                    {isMedical
-                      ? "Medical leave follows certificate dates in full days. HR must verify certification and eligibility."
-                      : "Weekends excluded · Choose any positive number of hours, up to 8 per working day. 8 hours = 1 day. Company public holidays are not configured yet."}
-                  </p>
-                  {leaveDates.length > 0 && (
+                  <p className="field-help">{leaveHelp[leaveCategory]}</p>
+                  {leaveCategory === "Training leave" && (
+                    <label>
+                      Training category
+                      <select
+                        name="training_category"
+                        value={trainingCategory}
+                        onChange={(e) => setTrainingCategory(e.target.value)}
+                        required
+                      >
+                        <option value="">Choose a category</option>
+                        {trainingCategories.map((option) => (
+                          <option key={option}>{option}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {fixedDays && (
+                    <div className="form-row">
+                      <label>
+                        {leaveCategory === "Maternity leave"
+                          ? "Expected confinement date"
+                          : "Expected birth date"}
+                        <input
+                          name="expected_birth_on"
+                          type="date"
+                          required={leaveCategory === "Maternity leave"}
+                        />
+                      </label>
+                      {leaveCategory === "Paternity leave" && (
+                        <label>
+                          Actual birth date
+                          <input name="birth_on" type="date" />
+                        </label>
+                      )}
+                      <label>
+                        {leaveCategory === "Maternity leave"
+                          ? "Formal notice given on"
+                          : "Notice given on"}
+                        <input name="notified_on" type="date" required />
+                      </label>
+                    </div>
+                  )}
+                  {uniformDuration && (
+                    <label>
+                      Duration for every date
+                      <select
+                        value={uniformHours}
+                        onChange={(e) => setUniformHours(e.target.value)}
+                      >
+                        <option value="8">Full day (8 hours)</option>
+                        <option value="4">Half day (4 hours)</option>
+                      </select>
+                    </label>
+                  )}
+                  {fixedDays && leaveDates.length > 0 && (
+                    <p className="field-help">
+                      {leaveDates.length} calendar days, {dateLabel(startDate)}{" "}
+                      – {dateLabel(leaveEnd)}.
+                    </p>
+                  )}
+                  {!fixedDays && leaveDates.length > 0 && (
                     <div className="leave-hours-list">
                       {leaveDates.map((date) => (
                         <label key={date}>
@@ -1649,8 +1841,8 @@ export default function Home() {
                             max="8"
                             step="any"
                             required
-                            readOnly={isMedical}
-                            value={isMedical ? "8" : (leaveHours[date] ?? "8")}
+                            readOnly={isMedical || uniformDuration}
+                            value={String(hoursFor(date))}
                             onChange={(e) =>
                               setLeaveHours((previous) => ({
                                 ...previous,
@@ -1663,16 +1855,12 @@ export default function Home() {
                       <p>
                         Total:{" "}
                         {leaveDates.reduce(
-                          (sum, date) =>
-                            sum +
-                            (isMedical ? 8 : Number(leaveHours[date] ?? 8)),
+                          (sum, date) => sum + hoursFor(date),
                           0,
                         )}{" "}
                         hours (
                         {leaveDates.reduce(
-                          (sum, date) =>
-                            sum +
-                            (isMedical ? 8 : Number(leaveHours[date] ?? 8)),
+                          (sum, date) => sum + hoursFor(date),
                           0,
                         ) / 8}{" "}
                         days)
@@ -1709,6 +1897,16 @@ export default function Home() {
                     connected.
                   </p>
                 </>
+              )}
+              {modal === "Leave" && (
+                <label>
+                  Supporting document (PDF, PNG or JPEG, up to 10 MB)
+                  <input
+                    name="document"
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                  />
+                </label>
               )}
               <label>
                 {modal === "Leave" ? "Reason" : "Additional details"}

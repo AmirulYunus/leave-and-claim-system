@@ -29,7 +29,6 @@ export function attachmentType(bytes: Uint8Array, fileName: string) {
 // echo back in a Content-Disposition header.
 export function safeFileName(fileName: string) {
   const base = fileName.split(/[\\/]/).pop() ?? "";
-  // eslint-disable-next-line no-control-regex
   const cleaned = base.replace(/[\u0000-\u001f\u007f"]/g, "").trim();
   return cleaned.slice(-200) || "document";
 }

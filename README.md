@@ -57,7 +57,21 @@ Every API handler requires a signed-in session and checks the employee's current
 - **Medical leave:** 14/18/22 days for under 2, 2–5 and 5 or more completed years. **Hospitalisation leave:** a separate 60 days.
 - **Held, not zero:** missing HR details, part-time and intern staff, 8 or more years' service, a 29 February join date and the leaving year show a pending reason and block that category until resolved. Unpaid leave has no limit.
 
-Carry-forward, public holidays, supporting documents, cancellation and the remaining leave types are pending. See LEAVE_POLICY.md for confirmed policy and unresolved decisions.
+## Leave types
+
+`app/lib/leave-types.ts` holds the category rules carried over from the Dataverse solution (see `scripts/dataverse/LEAVE_RULES_RECHECK_2026-10-25.md`). HR approves every type.
+
+- **Emergency leave:** weekdays, one 4- or 8-hour duration for every date, and may be requested after the leave. HR cannot approve it until a supporting document is attached. Approved hours are charged to Annual Leave.
+- **Training leave:** weekdays with one 4- or 8-hour duration. The employee chooses Company Required (not charged) or Employee-Requested External (charged to Annual Leave).
+- **Maternity leave:** 98 consecutive calendar days from the start date, with the expected confinement date and formal notice date. The 60-day notice window is left to HR's judgement rather than enforced.
+- **Paternity leave:** 7 consecutive calendar days that must start on the verified birth date, with a notice date and an expected or actual birth date. Approval requires 12 months of service and refuses a repeat approval for the same birth or a sixth confinement. HR enters the verified birth date when approving if the employee could not.
+- Maternity and paternity leave may cross a year end; other types must fall in one calendar year.
+
+## Supporting documents
+
+Employees attach PDF, PNG or JPEG files up to 10 MB to their own pending leave requests, either in the request form or from the request list. The file's content must match its extension. The owner and HR or Admin can download documents; anyone else gets "not found". Files are stored under random names in `.storage/uploads` (set `UPLOAD_DIR` to change it); S3 storage for staging and production is still to be added behind `app/lib/storage.ts`.
+
+Carry-forward, public holidays, cancellation, marriage and compassionate leave, and certificate uploads for medical leave are pending. See LEAVE_POLICY.md for confirmed policy and unresolved decisions.
 
 Database credentials stay on the server; DATABASE_URL must never use a NEXT_PUBLIC_ prefix. The Docker volume preserves records across container stops; removing its volume deletes them.
 
@@ -69,7 +83,7 @@ npx tsc --noEmit
 npm test
 ```
 
-With the dev server and local database running, `node scripts/check-persistence.mjs` checks a temporary 2.5-hour leave request, HR approval, persisted worked hours, and conflict rejection. It removes only its temporary records afterward. Its reserved test date (29 December 2026) must be unused. `node scripts/check-roles.mjs` verifies sign-in, employee creation, editing, role restrictions, and request isolation, then removes its temporary profiles. `node scripts/check-entitlements.mjs` verifies the entitlement summary and that missing HR details block entitled leave. The scripts sign in with `SEED_PASSWORD`.
+With the dev server and local database running, `node scripts/check-persistence.mjs` checks a temporary 2.5-hour leave request, HR approval, persisted worked hours, and conflict rejection. It removes only its temporary records afterward. Its reserved test date (29 December 2026) must be unused. `node scripts/check-roles.mjs` verifies sign-in, employee creation, editing, role restrictions, and request isolation, then removes its temporary profiles. `node scripts/check-entitlements.mjs` verifies the entitlement summary and that missing HR details block entitled leave. `node scripts/check-leave-types.mjs` verifies the maternity, paternity, training and emergency rules and document access. The scripts sign in with `SEED_PASSWORD`.
 
 ## Prisma schema changes
 

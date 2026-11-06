@@ -300,7 +300,14 @@ export async function PATCH(request: Request) {
     const reviewer = await database().employees.findUnique({
       where: { email: demoEmail(request) },
     });
-    if (!reviewer)
+    // Reject non-reviewers before any lookup so request IDs are not disclosed.
+    if (
+      !reviewer ||
+      !(
+        (await hasPermission(reviewer.id, "leave.approve")) ||
+        (await hasPermission(reviewer.id, "claim.approve"))
+      )
+    )
       return Response.json(
         { error: "Forbidden", message: "Forbidden" },
         { status: 403 },

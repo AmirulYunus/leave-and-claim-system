@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test": "tsx --test tests/*.test.mjs",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
     "format": "prettier --write app scripts tests prisma/seed.ts prisma.config.ts",

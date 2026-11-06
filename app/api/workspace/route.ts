@@ -12,6 +12,15 @@ import {
   leaveAllowanceHours,
   malaysiaDate,
 } from "../../lib/entitlement";
+import {
+  approvalProblem,
+  balanceCategory,
+  isFixedLength,
+  leaveCategories,
+  scheduleProblem,
+  submissionProblem,
+  type LeaveDetails,
+} from "../../lib/leave-types";
 import type { Prisma } from "../../generated/prisma/client";
 export const runtime = "nodejs";
 
@@ -90,25 +99,80 @@ async function getLeaveRecords(
         ...(excludeId ? { id: { not: excludeId } } : {}),
       },
     },
-    include: { requests: { select: { category: true, status: true } } },
+    include: {
+      requests: {
+        select: { category: true, status: true, training_category: true },
+      },
+    },
   });
   return entries.map((entry) => ({
     date: isoDate(entry.date),
     hours: Number(entry.hours),
     category: entry.requests.category,
     status: entry.requests.status,
+    balance: balanceCategory(
+      entry.requests.category,
+      entry.requests.training_category,
+    ),
   }));
 }
-// New requests must fall in the current Malaysia calendar year. A pending
-// request from a year that has since closed can still be decided.
+
+const optionalDate = (value: unknown) => {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || datesBetween(value, value).length !== 1)
+    throw new ValidationError("Enter valid birth and notice dates.");
+  return value;
+};
+// Only the details that apply to the category are kept.
+function leaveDetails(category: string, input: Record<string, unknown>) {
+  const birth = ["Maternity leave", "Paternity leave"].includes(category);
+  return {
+    expected_birth_on: birth ? optionalDate(input.expected_birth_on) : null,
+    birth_on:
+      category === "Paternity leave" ? optionalDate(input.birth_on) : null,
+    notified_on: birth ? optionalDate(input.notified_on) : null,
+    training_category:
+      category === "Training leave" &&
+      typeof input.training_category === "string"
+        ? input.training_category
+        : null,
+  };
+}
+const storedDetails = (request: {
+  expected_birth_on: Date | null;
+  birth_on: Date | null;
+  notified_on: Date | null;
+  training_category: string | null;
+}): LeaveDetails => ({
+  expected_birth_on: request.expected_birth_on
+    ? isoDate(request.expected_birth_on)
+    : null,
+  birth_on: request.birth_on ? isoDate(request.birth_on) : null,
+  notified_on: request.notified_on ? isoDate(request.notified_on) : null,
+  training_category: request.training_category,
+});
+const detailData = (details: LeaveDetails) => ({
+  expected_birth_on: details.expected_birth_on
+    ? dbDate(details.expected_birth_on)
+    : null,
+  birth_on: details.birth_on ? dbDate(details.birth_on) : null,
+  notified_on: details.notified_on ? dbDate(details.notified_on) : null,
+  training_category: details.training_category,
+});
+
+// New requests that use a yearly balance (or are recorded per weekday) must
+// fall in the current Malaysia calendar year; a pending request from a closed
+// year can still be decided. Maternity and paternity may cross a year end.
 async function validateLeaveEntries(
   tx: Transaction,
   employee: EmployeeRow,
   category: string,
   entries: LeaveEntry[],
+  details: LeaveDetails,
   { excludeId, submitting }: { excludeId?: number; submitting: boolean },
 ) {
   const medical = ["Medical leave", "Hospitalisation leave"].includes(category);
+  const fixed = isFixedLength(category);
   if (
     !entries.length ||
     entries.length > 366 ||
@@ -119,42 +183,55 @@ async function validateLeaveEntries(
     entries.some(
       (entry) =>
         datesBetween(entry.date, entry.date).length !== 1 ||
-        (!medical && !isWeekday(entry.date)) ||
+        (!medical && !fixed && !isWeekday(entry.date)) ||
         (medical && entry.hours !== 8),
     )
   )
     throw new ValidationError(
       "Use eligible dates. Medical leave is recorded in full days.",
     );
-  const years = new Set(entries.map((entry) => entry.date.slice(0, 4)));
-  if (years.size !== 1)
-    throw new ValidationError(
-      "Submit separate requests for each calendar year.",
-    );
+  const schedule = scheduleProblem(category, entries);
+  if (schedule) throw new ValidationError(schedule);
+  if (submitting) {
+    const problem = submissionProblem(category, details);
+    if (problem) throw new ValidationError(problem);
+  }
   const today = malaysiaDate();
-  const year = Number([...years][0]);
-  if (submitting && year !== Number(today.slice(0, 4)))
-    throw new ValidationError(
-      `Leave can be requested for ${today.slice(0, 4)} dates only.`,
-    );
-  const allowance = leaveAllowanceHours(
-    employment(employee),
-    category,
-    year,
-    today,
-  );
-  if (allowance.hours === undefined)
-    throw new ValidationError(
-      `${category} is unavailable: ${allowance.reason}`,
-    );
+  const year = Number(entries[0].date.slice(0, 4));
+  if (!fixed) {
+    if (new Set(entries.map((entry) => entry.date.slice(0, 4))).size !== 1)
+      throw new ValidationError(
+        "Submit separate requests for each calendar year.",
+      );
+    if (submitting && year !== Number(today.slice(0, 4)))
+      throw new ValidationError(
+        `Leave can be requested for ${today.slice(0, 4)} dates only.`,
+      );
+  }
+  const balance = balanceCategory(category, details.training_category);
   const records = await getLeaveRecords(tx, employee.id, excludeId);
-  const used = records
-    .filter(
-      (record) =>
-        record.category === category && record.date.startsWith(`${year}-`),
-    )
-    .reduce((sum, record) => sum + record.hours, 0);
-  const error = validateLeave(entries, records, allowance.hours - used);
+  let available = Infinity;
+  if (balance) {
+    const allowance = leaveAllowanceHours(
+      employment(employee),
+      balance,
+      year,
+      today,
+    );
+    if (allowance.hours === undefined)
+      throw new ValidationError(
+        `${category} is unavailable: ${allowance.reason}`,
+      );
+    available =
+      allowance.hours -
+      records
+        .filter(
+          (record) =>
+            record.balance === balance && record.date.startsWith(`${year}-`),
+        )
+        .reduce((sum, record) => sum + record.hours, 0);
+  }
+  const error = validateLeave(entries, records, available);
   if (error) throw new ValidationError(error);
   const worked = await tx.timesheet_entries.findMany({
     where: { employee_id: employee.id },
@@ -198,6 +275,10 @@ export async function GET(request: Request) {
             employee: true,
             claims: true,
             leave_entries: { orderBy: { date: "asc" } },
+            attachments: {
+              select: { id: true, file_name: true, size_bytes: true },
+              orderBy: { id: "asc" },
+            },
           },
           orderBy: [{ created_at: "desc" }, { id: "desc" }],
         });
@@ -235,6 +316,8 @@ export async function GET(request: Request) {
               date: isoDate(entry.date),
               hours: Number(entry.hours),
             })),
+            details: storedDetails(item),
+            attachments: item.attachments,
           })),
         };
       },
@@ -265,17 +348,14 @@ export async function POST(request: Request) {
       throw new ValidationError(
         "Enter a valid request description and reason.",
       );
-    const categories =
+    const categories: readonly string[] =
       input.kind === "Leave"
-        ? [
-            "Annual leave",
-            "Medical leave",
-            "Hospitalisation leave",
-            "Unpaid leave",
-          ]
+        ? leaveCategories
         : ["Travel", "Meals", "Office supplies", "Other"];
     if (!categories.includes(input.category))
       throw new ValidationError("Invalid category.");
+    const details =
+      input.kind === "Leave" ? leaveDetails(input.category, input) : null;
     if (
       input.kind === "Claim" &&
       (typeof input.value !== "number" ||
@@ -287,7 +367,7 @@ export async function POST(request: Request) {
       throw new ValidationError(
         "Enter a claim amount from RM 0.01 to RM 100,000 with at most two decimal places.",
       );
-    const denied = await database().$transaction(async (tx) => {
+    const created = await database().$transaction(async (tx) => {
       const employee = await getEmployeeProfile(tx, actor.id);
       if (
         !(await hasPermission(
@@ -318,18 +398,18 @@ export async function POST(request: Request) {
           employee,
           input.category,
           input.entries,
-          {
-            submitting: true,
-          },
+          details!,
+          { submitting: true },
         );
       }
-      await tx.requests.create({
+      return tx.requests.create({
         data: {
           employee_id: employee.id,
           kind: input.kind,
           category: input.category,
           detail: input.detail.trim(),
           note: input.note.trim(),
+          ...(details ? detailData(details) : {}),
           ...(input.kind === "Leave"
             ? {
                 leave_entries: {
@@ -343,8 +423,8 @@ export async function POST(request: Request) {
         },
       });
     });
-    if (denied) return denied;
-    return Response.json({ saved: true }, { status: 201 });
+    if (created instanceof Response) return created;
+    return Response.json({ saved: true, id: created.id }, { status: 201 });
   } catch (error) {
     return errorResponse(error);
   }
@@ -387,7 +467,11 @@ export async function PATCH(request: Request) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${initial.employee_id}::integer)`;
       const target = await tx.requests.findUnique({
         where: { id: input.id },
-        include: { employee: true, leave_entries: true },
+        include: {
+          employee: true,
+          leave_entries: true,
+          _count: { select: { attachments: true } },
+        },
       });
       if (!target || target.status !== "Pending")
         throw new ValidationError(
@@ -408,23 +492,62 @@ export async function PATCH(request: Request) {
         throw new ValidationError(
           "HR must verify medical certification and statutory eligibility.",
         );
-      if (target.kind === "Leave" && input.status === "Approved")
+      const details = storedDetails(target);
+      // HR records the verified birth date when approving paternity leave
+      // requested before the birth.
+      if (
+        target.category === "Paternity leave" &&
+        input.status === "Approved" &&
+        !details.birth_on
+      )
+        details.birth_on = optionalDate(input.birth_on);
+      if (target.kind === "Leave" && input.status === "Approved") {
+        const entries = target.leave_entries.map((entry) => ({
+          date: isoDate(entry.date),
+          hours: Number(entry.hours),
+        }));
+        const priorBirths =
+          target.category === "Paternity leave"
+            ? (
+                await tx.requests.findMany({
+                  where: {
+                    employee_id: target.employee_id,
+                    category: "Paternity leave",
+                    status: "Approved",
+                    id: { not: target.id },
+                  },
+                  select: { birth_on: true },
+                })
+              ).map((prior) =>
+                prior.birth_on ? isoDate(prior.birth_on) : null,
+              )
+            : [];
+        const problem = approvalProblem(target.category, {
+          details,
+          start: entries.map((entry) => entry.date).sort()[0],
+          joinDate: isoDate(target.employee.join_date),
+          attachments: target._count.attachments,
+          priorBirths,
+        });
+        if (problem) throw new ValidationError(problem);
         await validateLeaveEntries(
           tx,
           target.employee,
           target.category,
-          target.leave_entries.map((entry) => ({
-            date: isoDate(entry.date),
-            hours: Number(entry.hours),
-          })),
+          entries,
+          details,
           { excludeId: input.id, submitting: false },
         );
+      }
       await tx.requests.update({
         where: { id: input.id },
         data: {
           status: input.status,
           reviewed_by: reviewer.id,
           reviewed_at: new Date(),
+          ...(details.birth_on && !target.birth_on
+            ? { birth_on: dbDate(details.birth_on) }
+            : {}),
         },
       });
     });

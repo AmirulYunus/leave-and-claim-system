@@ -51,11 +51,29 @@ model employees {
   password_hash          String?
   must_change_password   Boolean             @default(true)
   sessions               sessions[]
+  attachments            attachments[]
   department             departments?        @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   cost_centre            cost_centres?       @relation(fields: [cost_centre_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   submittedRequests      requests[]          @relation("requests_employee_idToemployees")
   reviewedRequests       requests[]          @relation("requests_reviewed_byToemployees")
   timesheet_entries      timesheet_entries[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model attachments {
+  id           Int       @id @default(autoincrement())
+  request_id   Int
+  file_name    String
+  content_type String
+  size_bytes   Int
+  /// Random key in the storage backend; never derived from the file name.
+  storage_key  String    @unique
+  uploaded_by  Int
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  request      requests  @relation(fields: [request_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  uploader     employees @relation(fields: [uploaded_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([request_id], map: "attachments_request")
 }
 
 model sessions {
@@ -82,20 +100,28 @@ model leave_entries {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model requests {
-  id            Int             @id @default(autoincrement())
-  employee_id   Int
-  kind          String
-  category      String
-  detail        String
-  note          String
-  status        String          @default("Pending")
-  created_at    DateTime        @default(now()) @db.Timestamptz(6)
-  reviewed_by   Int?
-  reviewed_at   DateTime?       @db.Timestamptz(6)
-  claims        claims?
-  leave_entries leave_entries[]
-  employee      employees       @relation("requests_employee_idToemployees", fields: [employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  reviewer      employees?      @relation("requests_reviewed_byToemployees", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                Int             @id @default(autoincrement())
+  employee_id       Int
+  kind              String
+  category          String
+  detail            String
+  note              String
+  status            String          @default("Pending")
+  created_at        DateTime        @default(now()) @db.Timestamptz(6)
+  reviewed_by       Int?
+  reviewed_at       DateTime?       @db.Timestamptz(6)
+  /// Expected confinement (maternity) or expected birth (paternity) date.
+  expected_birth_on DateTime?       @db.Date
+  /// Actual birth date; paternity leave must start on it.
+  birth_on          DateTime?       @db.Date
+  notified_on       DateTime?       @db.Date
+  /// Company Required or Employee-Requested External.
+  training_category String?
+  claims            claims?
+  leave_entries     leave_entries[]
+  attachments       attachments[]
+  employee          employees       @relation("requests_employee_idToemployees", fields: [employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reviewer          employees?      @relation("requests_reviewed_byToemployees", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([employee_id, status], map: "requests_employee_status")
 }

@@ -39,6 +39,21 @@ try {
     temporary_password: "temporary-pass-1",
   };
   await api("workspace", "", "GET", undefined, 401);
+  for (const [origin, expected] of [
+    [baseUrl, 200],
+    [baseUrl.replace("localhost", "127.0.0.1"), 403],
+    ["http://cross-site.invalid", 403],
+  ]) {
+    const response = await fetch(`${baseUrl}/api/auth/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({
+        email: "hr@example.test",
+        password: process.env.SEED_PASSWORD,
+      }),
+    });
+    assert.equal(response.status, expected, `sign-in from ${origin}`);
+  }
   await api("employees", "Employee", "GET", undefined, 403);
   await api("employees", "Employee", "POST", input, 403);
   await api(

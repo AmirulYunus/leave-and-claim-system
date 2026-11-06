@@ -3,8 +3,6 @@
 import { FormEvent, useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  annualAllowance,
-  sickAllowance,
   datesBetween,
   isWeekday,
   validateLeave,
@@ -16,6 +14,7 @@ import {
   type EmploymentDetails,
 } from "./lib/employment";
 import { passwordLength } from "./lib/password-rules";
+import { malaysiaDate } from "./lib/entitlement";
 import { AuthScreen } from "./auth-screen";
 
 type Employee = EmploymentDetails & {
@@ -27,6 +26,25 @@ type Employee = EmploymentDetails & {
   must_change_password: boolean;
 };
 type OrganisationEntry = { id: number; name: string; is_active: boolean };
+// Usable hours this year per entitled category, or why none are available yet.
+type Allowance = {
+  hours: number | null;
+  reason: string;
+  rateDays: number | null;
+};
+type Entitlements = {
+  year: number;
+  asOf: string;
+  annual: Allowance;
+  medical: Allowance;
+  hospitalisation: Allowance;
+};
+const allowanceKeys: Record<string, keyof Entitlements> = {
+  "Annual leave": "annual",
+  "Medical leave": "medical",
+  "Hospitalisation leave": "hospitalisation",
+};
+const days = (hours: number) => Math.round((hours / 8) * 100) / 100;
 type Organisation = {
   departments: OrganisationEntry[];
   costCentres: OrganisationEntry[];
@@ -174,14 +192,13 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("All");
-  const [month, setMonth] = useState("2026-10");
+  const [month, setMonth] = useState(() => malaysiaDate().slice(0, 7));
+  const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [worked, setWorked] = useState<Record<string, string>>({});
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [leaveCategory, setLeaveCategory] = useState("Annual leave");
   const [leaveHours, setLeaveHours] = useState<Record<string, string>>({});
-  const allowance = annualAllowance(employee.join_date, "2026-10-06"); // Demo employee join date.
-  const medicalAllowance = sickAllowance(employee.join_date, "2026-10-06");
   const isMedical =
     leaveCategory === "Medical leave" ||
     leaveCategory === "Hospitalisation leave";
@@ -198,16 +215,27 @@ export default function Home() {
     (request) => request.employee_id === employee.id,
   );
   const pending = requests.filter((request) => request.status === "Pending");
-  const balance =
-    allowance -
+  // Hours of a category this year in requests with one of the given statuses.
+  const usedHours = (category: string, statuses: Request["status"][]) =>
     mine
       .filter(
         (request) =>
           request.kind === "Leave" &&
-          request.category === "Annual leave" &&
-          request.status === "Approved",
+          request.category === category &&
+          statuses.includes(request.status),
       )
-      .reduce((sum, request) => sum + request.value, 0);
+      .flatMap((request) => request.entries ?? [])
+      .filter((entry) => entry.date.startsWith(`${entitlements?.year}-`))
+      .reduce((sum, entry) => sum + entry.hours, 0);
+  const allowanceFor = (category: string) => {
+    const key = allowanceKeys[category];
+    return key ? (entitlements?.[key] as Allowance | undefined) : undefined;
+  };
+  const annual = entitlements?.annual;
+  const annualUsed = usedHours("Annual leave", ["Approved"]);
+  const annualAvailable =
+    annual?.hours == null ? null : annual.hours - annualUsed;
+  const medical = entitlements?.medical;
   const awaitingClaims = mine
     .filter(
       (request) => request.kind === "Claim" && request.status === "Pending",
@@ -231,6 +259,7 @@ export default function Home() {
     setRequests(data.requests);
     setWorked(data.worked);
     setEmployee(data.employee);
+    setEntitlements(data.entitlements);
     setLoaded(true);
     setConnectionError("");
   }
@@ -262,6 +291,7 @@ export default function Home() {
           setRequests(data.requests);
           setWorked(data.worked);
           setEmployee(data.employee);
+          setEntitlements(data.entitlements);
           setLoaded(true);
         }
       })
@@ -331,32 +361,25 @@ export default function Home() {
         setError("Submit separate requests for each calendar year.");
         return;
       }
-      if (startDate.slice(0, 4) !== "2026") {
-        setError("This demo has balances for 2026 only.");
+      if (startDate.slice(0, 4) !== String(entitlements?.year)) {
+        setError(
+          `Leave can be requested for ${entitlements?.year} dates only.`,
+        );
+        return;
+      }
+      const allowance = allowanceFor(category);
+      if (allowance && allowance.hours === null) {
+        setError(`${category} is unavailable: ${allowance.reason}`);
         return;
       }
       const existing = mine
         .filter((r) => r.kind === "Leave" && r.status !== "Rejected")
         .flatMap((r) => r.entries ?? []);
-      const reserved = mine
-        .filter((r) => r.category === category && r.status === "Pending")
-        .reduce((sum, r) => sum + r.value * 8, 0);
-      const categoryBalance =
-        category === "Annual leave"
-          ? balance * 8
-          : category === "Medical leave" || category === "Hospitalisation leave"
-            ? ((category === "Medical leave" ? medicalAllowance : 60) -
-                mine
-                  .filter(
-                    (r) => r.category === category && r.status === "Approved",
-                  )
-                  .reduce((sum, r) => sum + r.value, 0)) *
-              8
-            : Infinity;
       const validation = validateLeave(
         entries,
         existing,
-        categoryBalance - reserved,
+        (allowance?.hours ?? Infinity) -
+          usedHours(category, ["Pending", "Approved"]),
       );
       if (validation) {
         setError(validation);
@@ -641,7 +664,17 @@ export default function Home() {
         <main>
           <div className="page-heading">
             <div>
-              <div className="eyebrow">TUESDAY, 6 OCTOBER 2026</div>
+              <div className="eyebrow">
+                {entitlements &&
+                  new Date(`${entitlements.asOf}T00:00:00`)
+                    .toLocaleDateString("en-GB", {
+                      weekday: "long",
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    })
+                    .toUpperCase()}
+              </div>
               <h1>
                 {view === "Dashboard"
                   ? `Good morning, ${employee.name}`
@@ -723,47 +756,75 @@ export default function Home() {
                         <Icon name="leave" />
                       </span>
                     </div>
-                    <div className="stat-number">
-                      {balance}
-                      <span>days available</span>
-                    </div>
-                    <div className="balance-track">
-                      <span
-                        style={{
-                          width: `${Math.max(0, (balance / allowance) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                    <div className="stat-footer">
-                      {allowance - balance} of {allowance} days used{" "}
-                      <span>{balance * 8} hours available</span>
-                    </div>
+                    {annual?.hours == null || annualAvailable === null ? (
+                      <>
+                        <div className="stat-number">
+                          Pending
+                          <span>HR details or policy</span>
+                        </div>
+                        <p className="stat-subtext">
+                          {annual?.reason || "Loading your entitlement…"}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="stat-number">
+                          {days(annualAvailable)}
+                          <span>days available</span>
+                        </div>
+                        <div className="balance-track">
+                          <span
+                            style={{
+                              width: `${annual.hours ? Math.max(0, (annualAvailable / annual.hours) * 100) : 0}%`,
+                            }}
+                          />
+                        </div>
+                        <div className="stat-footer">
+                          {days(annualUsed)} of {days(annual.hours)} earned days
+                          used{" "}
+                          <span>
+                            {annual.rateDays} days a year, earned monthly
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
                   <div className="stat-card">
                     <div className="stat-title">
                       Medical leave <span className="icon-soft">✚</span>
                     </div>
-                    <div className="stat-number">
-                      {medicalAllowance -
-                        mine
-                          .filter(
-                            (r) =>
-                              r.category === "Medical leave" &&
-                              r.status === "Approved",
-                          )
-                          .reduce((sum, r) => sum + r.value, 0)}
-                      <span>days available</span>
-                    </div>
-                    <p className="stat-subtext">
-                      Here when you need to recover.
-                    </p>
-                    <div className="stat-footer">
-                      Annual allowance{" "}
-                      <span>
-                        {medicalAllowance} days · 60 hospitalisation days
-                        separately
-                      </span>
-                    </div>
+                    {medical?.hours == null ? (
+                      <>
+                        <div className="stat-number">
+                          Pending
+                          <span>HR details or policy</span>
+                        </div>
+                        <p className="stat-subtext">
+                          {medical?.reason || "Loading your entitlement…"}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="stat-number">
+                          {days(
+                            medical.hours -
+                              usedHours("Medical leave", ["Approved"]),
+                          )}
+                          <span>days available</span>
+                        </div>
+                        <p className="stat-subtext">
+                          Here when you need to recover.
+                        </p>
+                        <div className="stat-footer">
+                          Annual allowance{" "}
+                          <span>
+                            {medical.rateDays} days ·{" "}
+                            {entitlements?.hospitalisation.rateDays ?? 60}{" "}
+                            hospitalisation days separately
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </>
               )}

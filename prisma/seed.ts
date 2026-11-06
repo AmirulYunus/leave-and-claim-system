@@ -49,17 +49,33 @@ async function main() {
     return;
   }
   const password_hash = await hashPassword(password);
+  // Demo employment details so entitlements can be calculated; never applied
+  // over details HR has already entered.
+  const employment = { employment_type: "Full-time", employee_level: 1 };
   try {
     await prisma.$transaction(async (tx) => {
       for (const profile of profiles) {
         await tx.employees.upsert({
           where: { email: profile.email },
           update: {},
-          create: { ...profile, password_hash, must_change_password: false },
+          create: {
+            ...profile,
+            ...employment,
+            password_hash,
+            must_change_password: false,
+          },
         });
         await tx.employees.updateMany({
           where: { email: profile.email, password_hash: null },
           data: { password_hash, must_change_password: false },
+        });
+        await tx.employees.updateMany({
+          where: {
+            email: profile.email,
+            employment_type: null,
+            employee_level: null,
+          },
+          data: employment,
         });
       }
     });

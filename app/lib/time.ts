@@ -23,18 +23,6 @@ export function isWeekday(date: string) {
   const day = new Date(date + "T00:00:00Z").getUTCDay();
   return day !== 0 && day !== 6;
 }
-export function serviceYears(joinDate: string, asOf: string) {
-  let years = Number(asOf.slice(0, 4)) - Number(joinDate.slice(0, 4));
-  if (asOf.slice(5) < joinDate.slice(5)) years--;
-  return Math.max(0, years);
-}
-export function annualAllowance(joinDate: string, asOf: string) {
-  return serviceYears(joinDate, asOf) >= 5 ? 16 : 14;
-}
-export function sickAllowance(joinDate: string, asOf: string) {
-  const years = serviceYears(joinDate, asOf);
-  return years >= 5 ? 22 : years >= 2 ? 18 : 14;
-}
 export function validateLeave(
   entries: LeaveEntry[],
   existing: LeaveEntry[],

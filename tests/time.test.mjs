@@ -1,19 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  annualAllowance,
-  sickAllowance,
-  datesBetween,
-  isWeekday,
-  validateLeave,
-} from "../app/lib/time.ts";
-test("company allowance respects the five-year statutory boundary", () => {
-  assert.equal(annualAllowance("2021-10-06", "2026-10-05"), 14);
-  assert.equal(annualAllowance("2021-10-05", "2026-10-05"), 16);
-  assert.equal(sickAllowance("2024-10-06", "2026-10-05"), 14);
-  assert.equal(sickAllowance("2024-10-05", "2026-10-05"), 18);
-  assert.equal(sickAllowance("2021-10-05", "2026-10-05"), 22);
-});
+import { datesBetween, isWeekday, validateLeave } from "../app/lib/time.ts";
 test("annual leave excludes weekends and accepts four-hour requests", () => {
   assert.deepEqual(datesBetween("2026-10-09", "2026-10-12").filter(isWeekday), [
     "2026-10-09",

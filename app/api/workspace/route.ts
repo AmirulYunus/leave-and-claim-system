@@ -2,13 +2,16 @@ import { hasPermission } from "../../lib/permissions";
 import { authenticate } from "../../lib/auth";
 import { database } from "../../lib/prisma";
 import {
-  annualAllowance,
-  sickAllowance,
   datesBetween,
   isWeekday,
   validateLeave,
   type LeaveEntry,
 } from "../../lib/time";
+import {
+  entitlementRates,
+  leaveAllowanceHours,
+  malaysiaDate,
+} from "../../lib/entitlement";
 import type { Prisma } from "../../generated/prisma/client";
 export const runtime = "nodejs";
 
@@ -37,6 +40,43 @@ const dbDate = (date: string) => new Date(`${date}T00:00:00Z`);
 function getEmployeeProfile(tx: Transaction, id: number) {
   return tx.employees.findUniqueOrThrow({ where: { id } });
 }
+type EmployeeRow = Awaited<ReturnType<typeof getEmployeeProfile>>;
+
+function employment(employee: EmployeeRow) {
+  return {
+    join_date: isoDate(employee.join_date),
+    employee_level: employee.employee_level,
+    employment_type: employee.employment_type,
+    is_active: employee.is_active,
+    leaving_date: employee.leaving_date ? isoDate(employee.leaving_date) : null,
+  };
+}
+
+// This year's usable hours per entitled category, for the dashboard.
+function entitlementSummary(employee: EmployeeRow) {
+  const today = malaysiaDate();
+  const year = Number(today.slice(0, 4));
+  const details = employment(employee);
+  const rates = entitlementRates(details, today);
+  const summary = (category: string, rateDays: number | null) => {
+    const allowance = leaveAllowanceHours(details, category, year, today);
+    return {
+      hours: allowance.hours ?? null,
+      reason: allowance.reason ?? "",
+      rateDays,
+    };
+  };
+  return {
+    year,
+    asOf: today,
+    annual: summary("Annual leave", rates.annual.days),
+    medical: summary("Medical leave", rates.sick.days),
+    hospitalisation: summary(
+      "Hospitalisation leave",
+      rates.hospitalisation.days,
+    ),
+  };
+}
 async function getLeaveRecords(
   tx: Transaction,
   employeeId: number,
@@ -59,12 +99,14 @@ async function getLeaveRecords(
     status: entry.requests.status,
   }));
 }
+// New requests must fall in the current Malaysia calendar year. A pending
+// request from a year that has since closed can still be decided.
 async function validateLeaveEntries(
   tx: Transaction,
-  employee: { id: number; join_date: Date },
+  employee: EmployeeRow,
   category: string,
   entries: LeaveEntry[],
-  excludeId?: number,
+  { excludeId, submitting }: { excludeId?: number; submitting: boolean },
 ) {
   const medical = ["Medical leave", "Hospitalisation leave"].includes(category);
   if (
@@ -77,28 +119,42 @@ async function validateLeaveEntries(
     entries.some(
       (entry) =>
         datesBetween(entry.date, entry.date).length !== 1 ||
-        !entry.date.startsWith("2026-") ||
         (!medical && !isWeekday(entry.date)) ||
         (medical && entry.hours !== 8),
     )
   )
     throw new ValidationError(
-      "Use eligible 2026 dates. Medical leave is recorded in full days.",
+      "Use eligible dates. Medical leave is recorded in full days.",
+    );
+  const years = new Set(entries.map((entry) => entry.date.slice(0, 4)));
+  if (years.size !== 1)
+    throw new ValidationError(
+      "Submit separate requests for each calendar year.",
+    );
+  const today = malaysiaDate();
+  const year = Number([...years][0]);
+  if (submitting && year !== Number(today.slice(0, 4)))
+    throw new ValidationError(
+      `Leave can be requested for ${today.slice(0, 4)} dates only.`,
+    );
+  const allowance = leaveAllowanceHours(
+    employment(employee),
+    category,
+    year,
+    today,
+  );
+  if (allowance.hours === undefined)
+    throw new ValidationError(
+      `${category} is unavailable: ${allowance.reason}`,
     );
   const records = await getLeaveRecords(tx, employee.id, excludeId);
-  let allowance = Infinity;
-  if (category === "Annual leave")
-    allowance = annualAllowance(isoDate(employee.join_date), "2026-10-06");
-  else if (category === "Medical leave")
-    allowance = sickAllowance(isoDate(employee.join_date), "2026-10-06");
-  else if (category === "Hospitalisation leave") allowance = 60;
   const used = records
     .filter(
       (record) =>
-        record.category === category && record.date.startsWith("2026-"),
+        record.category === category && record.date.startsWith(`${year}-`),
     )
     .reduce((sum, record) => sum + record.hours, 0);
-  const error = validateLeave(entries, records, allowance * 8 - used);
+  const error = validateLeave(entries, records, allowance.hours - used);
   if (error) throw new ValidationError(error);
   const worked = await tx.timesheet_entries.findMany({
     where: { employee_id: employee.id },
@@ -155,6 +211,7 @@ export async function GET(request: Request) {
             role: employee.role,
             join_date: isoDate(employee.join_date),
           },
+          entitlements: entitlementSummary(employee),
           worked: Object.fromEntries(
             times.map((day) => [isoDate(day.date), day.hours.toString()]),
           ),
@@ -256,7 +313,15 @@ export async function POST(request: Request) {
           )
         )
           throw new ValidationError("Invalid leave hours.");
-        await validateLeaveEntries(tx, employee, input.category, input.entries);
+        await validateLeaveEntries(
+          tx,
+          employee,
+          input.category,
+          input.entries,
+          {
+            submitting: true,
+          },
+        );
       }
       await tx.requests.create({
         data: {
@@ -352,7 +417,7 @@ export async function PATCH(request: Request) {
             date: isoDate(entry.date),
             hours: Number(entry.hours),
           })),
-          input.id,
+          { excludeId: input.id, submitting: false },
         );
       await tx.requests.update({
         where: { id: input.id },

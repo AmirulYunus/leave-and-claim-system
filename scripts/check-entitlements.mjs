@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
 import nextEnv from "@next/env";
 import pg from "pg";
-import { baseUrl, demoSessions, signIn } from "./sessions.mjs";
+import {
+  baseUrl,
+  clearOutboxSince,
+  demoSessions,
+  outboxMark,
+  signIn,
+} from "./sessions.mjs";
 
 nextEnv.loadEnvConfig(process.cwd());
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
 const prefix = `entitlements-${Date.now()}`;
 const email = `${prefix}@example.test`;
 let sessions = {};
+let mark;
 
 async function api(path, who, method = "GET", body, expected = 200) {
   const response = await fetch(`${baseUrl}/api/${path}`, {
@@ -25,6 +32,7 @@ async function api(path, who, method = "GET", body, expected = 200) {
 
 try {
   await client.connect();
+  mark = await outboxMark(client);
   sessions = await demoSessions();
   const { entitlements } = await api("workspace", "Employee");
   const year = entitlements.year;
@@ -86,6 +94,7 @@ try {
   console.error(error.message);
   process.exitCode = 1;
 } finally {
+  if (mark !== undefined) await clearOutboxSince(client, mark);
   await client.query(
     "DELETE FROM leave_entries WHERE request_id IN (SELECT id FROM requests WHERE note = $1)",
     [prefix],

@@ -134,6 +134,22 @@ model carry_forwards {
   @@unique([employee_id, source_year])
 }
 
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model notifications {
+  id         Int       @id @default(autoincrement())
+  recipient  String
+  subject    String
+  body       String
+  /// Set for scheduled messages so a rerun cannot queue a duplicate.
+  dedupe_key String?   @unique
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  attempts   Int       @default(0)
+  sent_at    DateTime? @db.Timestamptz(6)
+  last_error String?
+
+  @@index([sent_at], map: "notifications_sent_at")
+}
+
 model sessions {
   /// SHA-256 digest of the token held in the session cookie.
   token_hash  String    @id

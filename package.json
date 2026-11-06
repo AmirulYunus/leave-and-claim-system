@@ -17,7 +17,9 @@
     "db:status": "prisma migrate status",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma migrate reset --force",
+    "notifications:deliver": "tsx scripts/notifications.ts deliver",
+    "notifications:remind": "tsx scripts/notifications.ts remind"
   },
   "dependencies": {
     "@next/env": "^16.3.8",

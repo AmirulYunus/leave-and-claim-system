@@ -25,6 +25,8 @@ import {
   unusedAnnualHours,
 } from "../../lib/annual-ledger";
 import { carryAllocation, carryUseBy } from "../../lib/carry-forward";
+import { queueForEmployeeAndHr } from "../../lib/notifications";
+import { requestDecisionMessages } from "../../lib/notification-messages";
 import type { Prisma } from "../../generated/prisma/client";
 export const runtime = "nodejs";
 
@@ -635,6 +637,18 @@ export async function PATCH(request: Request) {
             : {}),
         },
       });
+      await queueForEmployeeAndHr(
+        tx,
+        target.employee.email,
+        requestDecisionMessages({
+          kind: target.kind,
+          category: target.category,
+          detail: target.detail,
+          status: input.status,
+          employeeName: target.employee.name,
+          reviewerName: reviewer.name,
+        }),
+      );
     });
     if (denied) return denied;
     return Response.json({ saved: true });

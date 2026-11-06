@@ -4,6 +4,8 @@ import { database } from "../../lib/prisma";
 import { malaysiaDate } from "../../lib/entitlement";
 import { closedYearProblem } from "../../lib/annual-ledger";
 import { balanceCategory } from "../../lib/leave-types";
+import { queueForEmployeeAndHr } from "../../lib/notifications";
+import { cancellationDecisionMessages } from "../../lib/notification-messages";
 import {
   cancellationDecisionProblem,
   cancellationKind,
@@ -112,7 +114,9 @@ export async function PATCH(request: Request) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${pending.request.employee_id}::integer)`;
       const cancellation = await tx.cancellations.findUniqueOrThrow({
         where: { id: input.id },
-        include: { request: { include: { leave_entries: true } } },
+        include: {
+          request: { include: { leave_entries: true, employee: true } },
+        },
       });
       const approving = input.status === "Approved";
       const problem = cancellationDecisionProblem({
@@ -155,6 +159,19 @@ export async function PATCH(request: Request) {
           reviewed_at: new Date(),
         },
       });
+      const leave = cancellation.request;
+      await queueForEmployeeAndHr(
+        tx,
+        leave.employee.email,
+        cancellationDecisionMessages({
+          category: leave.category,
+          detail: leave.detail,
+          status: input.status,
+          correction: cancellation.kind === "Correction",
+          employeeName: leave.employee.name,
+          reviewerName: reviewer.name,
+        }),
+      );
     });
     return Response.json({ saved: true });
   } catch (error) {

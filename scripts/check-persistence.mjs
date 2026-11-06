@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import nextEnv from "@next/env";
 import pg from "pg";
-import { baseUrl, demoSessions } from "./sessions.mjs";
+import {
+  baseUrl,
+  clearOutboxSince,
+  demoSessions,
+  outboxMark,
+} from "./sessions.mjs";
 nextEnv.loadEnvConfig(process.cwd());
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
 const marker = `Persistence check ${Date.now()}`;
 let id;
 let sessions = {};
+let mark;
 const headers = (role) => ({
   "Content-Type": "application/json",
   Cookie: sessions[role],
@@ -23,6 +29,7 @@ async function api(method, body) {
 }
 try {
   await client.connect();
+  mark = await outboxMark(client);
   sessions = await demoSessions();
   const before = await api("GET");
   const date = "2026-12-29";
@@ -93,6 +100,7 @@ try {
   console.error(error.message);
   process.exitCode = 1;
 } finally {
+  if (mark !== undefined) await clearOutboxSince(client, mark);
   if (id) {
     await client.query("BEGIN");
     await client.query("DELETE FROM leave_entries WHERE request_id=$1", [id]);

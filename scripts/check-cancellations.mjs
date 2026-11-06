@@ -3,13 +3,20 @@ import { unlink } from "node:fs/promises";
 import path from "node:path";
 import nextEnv from "@next/env";
 import pg from "pg";
-import { baseUrl, demoSessions, signIn } from "./sessions.mjs";
+import {
+  baseUrl,
+  clearOutboxSince,
+  demoSessions,
+  outboxMark,
+  signIn,
+} from "./sessions.mjs";
 
 nextEnv.loadEnvConfig(process.cwd());
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
 const prefix = `cancellations-${Date.now()}`;
 const email = `${prefix}@example.test`;
 let sessions = {};
+let mark;
 
 async function api(path, who, method = "GET", body, expected = 200) {
   const response = await fetch(`${baseUrl}/api/${path}`, {
@@ -44,6 +51,7 @@ const statusOf = async (id) =>
 
 try {
   await client.connect();
+  mark = await outboxMark(client);
   sessions = await demoSessions();
   const { year } = (await api("workspace", "Employee")).entitlements;
   await api(
@@ -147,6 +155,7 @@ try {
   console.error(error.message);
   process.exitCode = 1;
 } finally {
+  if (mark !== undefined) await clearOutboxSince(client, mark);
   const ids = "(SELECT id FROM requests WHERE note = $1)";
   const files = await client.query(
     `SELECT storage_key FROM attachments WHERE request_id IN ${ids}`,

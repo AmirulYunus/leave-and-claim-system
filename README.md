@@ -93,6 +93,17 @@ Every API handler requires a signed-in session and checks the employee's current
 - Once a year's carry-forward is confirmed, that year's Annual Leave (approvals and cancellations) is locked.
 - Approvals count approved leave only; a new request also reserves the employee's pending requests.
 
+## Email notifications
+
+Emails are written to the `notifications` outbox in the same database transaction as the event they report, then delivered separately:
+
+- Leave and claim decisions, and cancellation or correction decisions, email the employee and every active HR account.
+- A confirmed carry-forward that credits hours emails the employee and HR.
+- On 1 October and 30 November every active employee gets a carry-forward reminder.
+- Emails name the request, its dates and the decision; reasons, medical details and documents are never included.
+
+Run `npm run notifications:deliver` (for example every few minutes) to send queued emails, and `npm run notifications:remind` daily to queue reminders on their dates; a rerun never queues a second reminder. Failed sends are retried up to 5 times and keep their last error. `EMAIL_DRIVER` selects the sender: `log` (the default) prints emails for development; the staging and production provider still needs to be added in `app/lib/email-delivery.ts`. `APP_URL` sets the link in emails.
+
 ## Supporting documents
 
 Employees attach PDF, PNG or JPEG files up to 10 MB to their own pending leave requests, either in the request form or from the request list. The file's content must match its extension. The owner and HR or Admin can download documents; anyone else gets "not found". Files are stored under random names in `.storage/uploads` (set `UPLOAD_DIR` to change it); S3 storage for staging and production is still to be added behind `app/lib/storage.ts`.
@@ -109,7 +120,7 @@ npx tsc --noEmit
 npm test
 ```
 
-With the dev server and local database running, `node scripts/check-persistence.mjs` checks a temporary 2.5-hour leave request, HR approval, persisted worked hours, and conflict rejection. It removes only its temporary records afterward. Its reserved test date (29 December 2026) must be unused. `node scripts/check-roles.mjs` verifies sign-in, employee creation, editing, role restrictions, and request isolation, then removes its temporary profiles. `node scripts/check-entitlements.mjs` verifies the entitlement summary and that missing HR details block entitled leave. `node scripts/check-leave-types.mjs` verifies the leave-type rules and document access, `node scripts/check-cancellations.mjs` verifies cancellation and HR correction, and `node scripts/check-carry-forward.mjs` verifies the carry-forward preview, limits and whichever date windows are open today. The scripts sign in with `SEED_PASSWORD`.
+With the dev server and local database running, `node scripts/check-persistence.mjs` checks a temporary 2.5-hour leave request, HR approval, persisted worked hours, and conflict rejection. It removes only its temporary records afterward. Its reserved test date (29 December 2026) must be unused. `node scripts/check-roles.mjs` verifies sign-in, employee creation, editing, role restrictions, and request isolation, then removes its temporary profiles. `node scripts/check-entitlements.mjs` verifies the entitlement summary and that missing HR details block entitled leave. `node scripts/check-leave-types.mjs` verifies the leave-type rules and document access, `node scripts/check-cancellations.mjs` verifies cancellation and HR correction, and `node scripts/check-carry-forward.mjs` verifies the carry-forward preview, limits and whichever date windows are open today, and `node scripts/check-notifications.mjs` verifies the outbox, delivery and reminders. The check scripts delete the emails they cause, so run them only against a local database. The scripts sign in with `SEED_PASSWORD`.
 
 ## Prisma schema changes
 

@@ -11,6 +11,8 @@ import {
   confirmationProblem,
   exceptionProblem,
 } from "../../lib/carry-forward";
+import { queueForEmployeeAndHr } from "../../lib/notifications";
+import { carryForwardMessages } from "../../lib/notification-messages";
 import { Prisma } from "../../generated/prisma/client";
 
 export const runtime = "nodejs";
@@ -210,6 +212,17 @@ export async function POST(request: Request) {
           confirmed_by: actor.id,
         },
       });
+      // Notify only when hours are actually credited.
+      if (carryHours > 0)
+        await queueForEmployeeAndHr(
+          tx,
+          employee.email,
+          carryForwardMessages({
+            employeeName: employee.name,
+            hours: carryHours,
+            sourceYear: input.source_year,
+          }),
+        );
     });
     return Response.json({ saved: true }, { status: 201 });
   } catch (error) {

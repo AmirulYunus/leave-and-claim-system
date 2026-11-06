@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import nextEnv from "@next/env";
 import pg from "pg";
-import { baseUrl, demoSessions } from "./sessions.mjs";
+import {
+  baseUrl,
+  clearOutboxSince,
+  demoSessions,
+  outboxMark,
+} from "./sessions.mjs";
 
 // Checks what today's date allows: previews, exception windows and refusals.
 // Confirmation, the January–March block and the closed-year lock depend on
@@ -11,6 +16,7 @@ const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
 const prefix = `carry-${Date.now()}`;
 const email = `${prefix}@example.test`;
 let sessions = {};
+let mark;
 
 async function api(path, who, method = "GET", body, expected = 200) {
   const response = await fetch(`${baseUrl}/api/${path}`, {
@@ -26,6 +32,7 @@ async function api(path, who, method = "GET", body, expected = 200) {
 let employeeId;
 try {
   await client.connect();
+  mark = await outboxMark(client);
   sessions = await demoSessions();
   const { year, asOf } = (await api("workspace", "Employee")).entitlements;
   await api(
@@ -104,6 +111,7 @@ try {
   console.error(error.message);
   process.exitCode = 1;
 } finally {
+  if (mark !== undefined) await clearOutboxSince(client, mark);
   if (employeeId)
     for (const table of ["carry_forward_exceptions", "carry_forwards"])
       await client.query(`DELETE FROM ${table} WHERE employee_id = $1`, [

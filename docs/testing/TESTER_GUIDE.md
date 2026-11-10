@@ -43,7 +43,7 @@ The button now says Submit claim. Update the UI tests.
 
 For the last kind of request, say what the old words were and what the new words are. Cursor should update a test only after the wording change was intended.
 
-To watch the throwaway app yourself, run `npm run e2e:env` and wait until it prints the app address. Sign in with one of the accounts above. When you are finished, run `npm run e2e:stop`.
+To watch the throwaway app yourself, run `npm run e2e:env` and wait until it prints `READY http://127.0.0.1:3200`. An earlier line prints that address before the app is ready. Sign in with one of the accounts above. When you are finished, run `npm run e2e:stop`.
 
 ## Read the report
 
@@ -65,7 +65,7 @@ When a developer fixes the app, that test should pass. Cursor then removes the e
 
 If the message says Docker Desktop is not running, open Docker Desktop and wait until it is running. Then run the tests again.
 
-If the message says port 3200 is already in use, a previous test app may still be running. Run `npm run e2e:stop`. Then start the test again.
+If the message says port 3200 is already in use, another program may be listening there. `npm run e2e:stop` stops only the test app it started. It does not close any other program. Close that program yourself, then start the test again. If the message names a previous test app, `npm run e2e:stop` is the right command.
 
 If the tests say they only run against this computer, they stopped on purpose. They also stop on purpose when sign-in did not reach the throwaway database. They did not change your data. Run `npm run e2e:stop`, then run the tests again. Do not change the address in `playwright.config.ts`.
 

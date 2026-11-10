@@ -35,23 +35,25 @@ Demo balances are not company policy. Compute an expected balance from the rules
 
 If `http://127.0.0.1:3200` is not already this test app, start `npm run e2e:env` in the background from the repo root.
 
-Wait until the log prints `READY http://127.0.0.1:3200`. The earlier line `Test database leave-e2e-db is ready.` comes before the app is listening.
+Wait until the log prints `READY http://127.0.0.1:3200`. An earlier line prints the address before the app is listening.
 
-If the log says the test app is already running, use that instance. If it says port 3200 is in use and this test app is not the listener, stop and tell the tester. Do not kill an unknown process. Suggest `npm run e2e:stop` only when the stuck process is a previous test app.
+`npm run e2e:stop` stops only the test app this harness started. If another program is using port 3200, tell the tester to close that program. Do not kill it.
 
 The suite shares one database and one app. Do not start a second `npm run e2e:env` or a second full `npm run test:e2e` while one is already running.
 
-Leave `e2e:env` running when you finish. Playwright reuses it. `npm run e2e:stop` only when the tester asks to stop.
+A one-shot test request stops the app at the end with `npm run e2e:stop`. Keep the app running only inside an ongoing session of follow-up requests.
 
 ## 3. Explore with Playwright
 
-Use the `playwright` MCP server from `.cursor/mcp.json`. If those tools are not available, tell the tester to enable Playwright under Cursor Settings, then MCP. Do not switch to another browser tool and do not open another URL.
+Playwright MCP is the browser tool. `.cursor/mcp.json` restricts it to `http://127.0.0.1:3200` with `--allowed-origins` and `--isolated`.
 
-Before the first action, call `browser_start_video` and `browser_start_tracing`. After exploration, call `browser_stop_video` and `browser_stop_tracing`. Recordings land in `.playwright-mcp/`.
+Before the first action, call `browser_start_video` and `browser_start_tracing`. After exploration, call `browser_stop_video` and `browser_stop_tracing`. Recordings land in `.playwright-mcp/`. `browser_start_video` and `browser_start_tracing` apply only to Playwright MCP.
 
-Navigate only to `http://127.0.0.1:3200`. Take `browser_snapshot` before each action and use the new refs. Fill date fields one action at a time. Call `browser_handle_dialog` before a click that opens a confirm or a prompt.
+If those tools are not available, use `cursor-ide-browser` and open only `http://127.0.0.1:3200`. Before a click that opens `window.prompt` or `window.confirm`, stub that function with `Runtime.evaluate`. Say in the report that no exploration recording exists.
 
-Drive the screen a tester would use. Do not insert leave, claims, or timesheet rows with SQL. SQL is for reading what the screen wrote.
+Navigate only to `http://127.0.0.1:3200`. Take `browser_snapshot` before each action and use the new refs. Fill date fields one action at a time. With Playwright MCP, call `browser_handle_dialog` before a click that opens a confirm or a prompt.
+
+Drive the screen a tester would use. Do not insert leave, claims, or timesheet rows with SQL. SQL is for reading what the screen wrote. The command is `node tests/e2e/support/environment.mjs sql "<query>"`.
 
 ## 4. Write the scenario table
 
@@ -65,9 +67,11 @@ If the tester asked for a plan, show the table and wait. Otherwise keep the tabl
 
 ## 5. Write the spec
 
-Add or extend one spec under `tests/e2e/specs/`. One `test.describe` per feature area. Import `test` and `expect` from `tests/e2e/support/fixtures.ts`. Import helpers from `tests/e2e/support/app.ts`.
+Add or extend one spec under `tests/e2e/specs/`. One `test.describe` per feature area. Ids are unique across every spec. A new file in an existing area continues that area's numbering. Cancellation uses `LEAVE-*`.
 
-The title starts with the scenario id, for example `LEAVE-NEG-03 weekend dates are refused`. Each user-visible step is a `test.step`. Create isolated rows with `freshEmployee` or `uniqueTag`. Assert the visible outcome and the database row. For a negative, assert that nothing was written for that actor.
+Import `test` and `expect` from `tests/e2e/support/fixtures.ts`. Page flows live in `ui.ts`. Auth, assertions, and dates live in `app.ts`. Database readers live in `records.ts`. Policy math lives in `rules.ts`. Employee creation lives in `provision.ts`.
+
+The title starts with the scenario id, for example `LEAVE-POS-01 a full weekday stays pending`. Each user-visible step is a `test.step`. Create isolated rows with `freshEmployee` or `uniqueTag`. Assert the visible outcome and the database row. For a negative, assert that nothing was written for that actor. When the refusal hides the control, follow `LEAVE-PERM-01` in `leave.spec.ts`. `decide()` is for request decisions. A pending cancellation is on an Approved request and is decided from the All view.
 
 Use `getByRole` and `getByLabel`. Do not call `page.waitForTimeout`.
 
@@ -75,13 +79,14 @@ A confirmed app bug stays as a test of the correct behavior, marked `test.fail()
 
 ## 6. Run and classify failures
 
-Run the file you edited.
+Run the file you edited, then run the full suite once.
 
 ```bash
 npx playwright test tests/e2e/specs/<file>.spec.ts
+npm run test:e2e
 ```
 
-Run `npm run test:e2e` only when the tester asked to run everything.
+A one-shot request then runs `npm run e2e:stop`.
 
 On failure, classify before editing.
 
@@ -111,7 +116,7 @@ One line per scenario, in the tester's words.
 
 - HTML report. Run `npm run test:e2e:report`.
 - Videos, screenshots, and traces from the run are in `test-results/`.
-- Exploration video and trace are in `.playwright-mcp/`.
+- Exploration video and trace are in `.playwright-mcp/` when Playwright MCP was used. Otherwise say that no exploration recording exists.
 
 ## Run this again
 

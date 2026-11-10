@@ -135,7 +135,7 @@ npm run test:e2e:report
 npm run e2e:stop
 ```
 
-`npm run e2e:env` leaves the throwaway app running so Cursor can explore it. `npm run test:e2e` runs every UI spec and reuses that app when it is already up. `npm run test:e2e:headed` shows the browser, and `npm run test:e2e:ui` opens the Playwright runner. `npm run test:e2e:report` opens the HTML report. `npm run e2e:stop` removes the throwaway database.
+`npm run e2e:env` leaves the throwaway app running. Wait until it prints `READY http://127.0.0.1:3200` before you open it. `npm run test:e2e` runs every UI spec and reuses that app when it is already up. `npm run test:e2e:headed` shows the browser, and `npm run test:e2e:ui` opens the Playwright runner. `npm run test:e2e:report` opens the HTML report. `npm run e2e:stop` stops the test app it started and removes the throwaway database. If another program is using port 3200, close that program. `e2e:stop` will not close it.
 
 ## Prisma schema changes
 

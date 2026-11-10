@@ -10,17 +10,57 @@ alwaysApply: false
 
 Do not delete `tests/e2e/support/global-setup.ts`. Do not remove `globalSetup` from `playwright.config.ts`. Do not edit `app/` to make a test pass.
 
-One `test.describe` per feature area. The title starts with the scenario id.
+One `test.describe` per feature area. The title starts with the scenario id. Ids are unique across `tests/e2e/specs`. A new file in an existing area continues that area's numbering.
+
+Page flows (`submitLeave`, `decide`, `openApprovals`) live in `tests/e2e/support/ui.ts`. Auth, assertions, and dates live in `app.ts`. Database readers live in `records.ts`. Policy math lives in `rules.ts`. Employee creation lives in `provision.ts`. Import `test` and `expect` from `fixtures.ts`.
+
+`yearPlan().weekdays[0]` is today when today is a weekday. A case that needs a future date uses `futureWeekday(plan)`.
+
+Filter every `getByRole("alert")` on the sentence. The Pending chip on HR approvals filters by request status only. A pending cancellation is decided from the All view. `decide()` is for the request, not the cancellation.
 
 ```ts
-test("LEAVE-NEG-03 weekend dates are refused", async ({ freshEmployee, db }) => {
-  await test.step("Submit a Saturday through Sunday range", async () => {
-    // Role and label locators only. No page.waitForTimeout.
+import { test, expect } from "../support/fixtures";
+import { expectSuccess } from "../support/app";
+import { leaveRequest, sqlString } from "../support/records";
+import { leaveSummary, yearPlan } from "../support/rules";
+import { requestRow, submitLeave } from "../support/ui";
+
+test.describe("Leave requests", () => {
+  test("LEAVE-POS-01 a full weekday stays pending", async ({
+    freshEmployee,
+    db,
+    uniqueTag,
+  }) => {
+    const date = yearPlan().weekdays[0];
+    const note = `LEAVE-POS-01 ${uniqueTag}`;
+    const page = await freshEmployee.signedInPage();
+
+    await test.step("Submit one full weekday", async () => {
+      await submitLeave(page, {
+        start: date,
+        end: date,
+        note,
+        summary: leaveSummary(1, 8),
+      });
+      await expectSuccess(page, "Leave request saved for HR review.");
+      await expect(requestRow(page, note)).toContainText("Pending");
+    });
+
+    expect(await leaveRequest(db, note)).toMatchObject({
+      status: "Pending",
+      reviewerId: "",
+      email: freshEmployee.email,
+    });
+    expect(
+      await db.query(
+        `SELECT count(*)::text FROM requests WHERE note = ${sqlString(note)}`,
+      ),
+    ).toEqual([["1"]]);
   });
 });
 ```
 
-Isolate rows with `freshEmployee` or `uniqueTag`. Assert the visible outcome and the database row. A negative asserts that nothing was written for that actor.
+Isolate rows with `freshEmployee` or `uniqueTag`. Assert the visible outcome and the database row. A negative asserts that nothing was written for that actor. Wrap interpolated SQL with `sqlString`. The SQL command is `node tests/e2e/support/environment.mjs sql "<query>"`.
 
 A confirmed app bug stays a correct-behavior test. Do not loosen the assertion so the wrong behavior passes.
 

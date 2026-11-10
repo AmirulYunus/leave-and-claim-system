@@ -60,7 +60,9 @@ export async function GET(request: Request) {
     if (actor instanceof Response) return actor;
     const today = malaysiaDate();
     const currentYear = Number(today.slice(0, 4));
-    const requested = Number(new URL(request.url).searchParams.get("year"));
+    const rawYear = new URL(request.url).searchParams.get("year");
+    const requested =
+      rawYear === null || rawYear.trim() === "" ? Number.NaN : Number(rawYear);
     const sourceYear = Number.isSafeInteger(requested)
       ? requested
       : today.slice(5) <= "03-31"

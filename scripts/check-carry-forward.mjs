@@ -17,6 +17,8 @@ const prefix = `carry-${Date.now()}`;
 const email = `${prefix}@example.test`;
 let sessions = {};
 let mark;
+const malaysiaToday = () =>
+  new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
 async function api(path, who, method = "GET", body, expected = 200) {
   const response = await fetch(`${baseUrl}/api/${path}`, {
@@ -51,6 +53,23 @@ try {
   );
   await api("carry-forward", "Employee", "GET", undefined, 403);
   const view = await api("carry-forward", "HR");
+  const today = malaysiaToday();
+  const currentYear = Number(today.slice(0, 4));
+  const defaultYear = today.slice(5) <= "03-31" ? currentYear - 1 : currentYear;
+  assert.equal(
+    view.sourceYear,
+    defaultYear,
+    "GET /api/carry-forward with no year uses the default source year",
+  );
+  assert.equal(view.provisional, defaultYear >= currentYear);
+  assert.equal(
+    view.canRecordException,
+    today >= `${defaultYear}-10-01` && today <= `${defaultYear}-12-15`,
+  );
+  assert.equal(
+    view.canConfirm,
+    today >= `${defaultYear + 1}-01-01` && today <= `${defaultYear + 1}-03-31`,
+  );
   const row = view.rows.find((r) => r.name === "Carry-forward check");
   employeeId = row.employee_id;
   assert.equal(row.draft.limit, 40);

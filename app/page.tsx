@@ -1045,7 +1045,7 @@ export default function Home() {
                       <>
                         <div className="stat-number">
                           Pending
-                          <span>HR details or policy</span>
+                          <span> HR details or policy</span>
                         </div>
                         <p className="stat-subtext">
                           {annual?.reason || "Loading your entitlement…"}
@@ -1055,7 +1055,7 @@ export default function Home() {
                       <>
                         <div className="stat-number">
                           {days(annualAvailable)}
-                          <span>days available</span>
+                          <span> days available</span>
                         </div>
                         <div className="balance-track">
                           <span
@@ -1088,7 +1088,7 @@ export default function Home() {
                       <>
                         <div className="stat-number">
                           Pending
-                          <span>HR details or policy</span>
+                          <span> HR details or policy</span>
                         </div>
                         <p className="stat-subtext">
                           {medical?.reason || "Loading your entitlement…"}
@@ -1101,7 +1101,7 @@ export default function Home() {
                             medical.hours -
                               usedHours("Medical leave", ["Approved"]),
                           )}
-                          <span>days available</span>
+                          <span> days available</span>
                         </div>
                         <p className="stat-subtext">
                           Here when you need to recover.

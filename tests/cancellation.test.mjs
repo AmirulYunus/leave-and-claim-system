@@ -57,6 +57,25 @@ test("HR corrects started emergency leave but not other leave", () => {
   );
 });
 
+test("a stranger gets request not found before any request state", () => {
+  const stranger = { ...base, actorId: 9, actorCanReview: false };
+  for (const change of [
+    { status: "Pending" },
+    { status: "Rejected" },
+    { kind: "Claim" },
+    { hasPending: true },
+    { dates: ["2026-11-02"] },
+    { category: "Emergency leave", dates: ["2026-11-02"] },
+    { reason: " " },
+    { reason: "x".repeat(501) },
+  ])
+    assert.equal(
+      cancellationKind({ ...stranger, ...change }).error,
+      "Request not found.",
+      JSON.stringify(change),
+    );
+});
+
 test("decisions are pending, not self-reviewed, and still in the future", () => {
   const decision = {
     kind: "Cancellation",

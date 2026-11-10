@@ -99,6 +99,12 @@ export function scheduleDates(category: string, start: string, end: string) {
 
 // Category-specific date and duration rules for the saved entries.
 export function scheduleProblem(category: string, entries: LeaveEntry[]) {
+  if (entries.length === 0) {
+    const length = fixedLengthDays[category];
+    return length
+      ? `${category} covers ${length} consecutive calendar days in full days.`
+      : `${category} uses one duration for every date: half day (4 hours) or full day (8 hours).`;
+  }
   const dates = entries.map((entry) => entry.date).sort();
   const length = fixedLengthDays[category];
   if (length) {

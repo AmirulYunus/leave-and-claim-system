@@ -39,6 +39,15 @@ export async function expectError(page: Page, message: string | RegExp) {
   ).toBeVisible();
 }
 
+export async function expectRefusal(page: Page, message: string) {
+  await expect(
+    page.getByRole("alert").filter({ hasText: message }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({ hasText: message }),
+  ).toHaveCount(0);
+}
+
 export function answerDialogs(page: Page, answers: Array<string | null>) {
   page.on("dialog", async (dialog) => {
     const answer = answers.shift();

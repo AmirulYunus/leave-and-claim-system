@@ -342,7 +342,8 @@ h1 {
   font-size: 11px;
   letter-spacing: 0;
   color: #89948b;
-  margin-left: 10px;
+  /* The unit text starts with a space so the name reads "12.5 days". The margin gives that space back. */
+  margin-left: calc(10px - 0.277em);
 }
 .currency {
   font-size: 30px;
@@ -1125,7 +1126,7 @@ td {
   }
   .stat-number > span {
     display: inline;
-    margin-left: 9px;
+    margin-left: calc(9px - 0.277em);
   }
   .stat-footer > span {
     display: block;

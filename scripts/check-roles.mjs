@@ -117,6 +117,19 @@ try {
     });
     assert.equal(response.status, expected, `sign-in from ${origin}`);
   }
+  const spoofed = await fetch(`${baseUrl}/api/auth/session`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Origin: "https://evil.example",
+      "X-Forwarded-Host": "evil.example",
+    },
+    body: JSON.stringify({
+      email: "hr@example.test",
+      password: process.env.SEED_PASSWORD,
+    }),
+  });
+  assert.equal(spoofed.status, 403, "sign-in with a spoofed X-Forwarded-Host");
   await api("employees", "Employee", "GET", undefined, 403);
   const emptyEmployee = [];
   for (const method of ["POST", "PATCH"]) {

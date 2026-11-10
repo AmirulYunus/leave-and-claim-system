@@ -3,12 +3,12 @@ import { sessionEmployee } from "./session";
 // Browsers send Origin on cross-site requests; reject them as a CSRF guard in
 // addition to the SameSite session cookie. Compare with the Host header because
 // request.url may name a different host than the browser used (127.0.0.1 vs
-// localhost in development, or the internal address behind a proxy).
+// localhost in development). X-Forwarded-Host is ignored because the client
+// can set it.
 export function checkOrigin(request: Request) {
   const origin = request.headers.get("origin");
   if (!origin) return;
-  const host =
-    request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  const host = request.headers.get("host");
   let originHost = "";
   try {
     originHost = new URL(origin).host;

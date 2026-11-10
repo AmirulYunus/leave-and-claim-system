@@ -153,6 +153,7 @@ export async function POST(request: Request) {
   try {
     const actor = await authenticate(request);
     if (actor instanceof Response) return actor;
+    if (!(await hasPermission(actor.id, "user.create"))) return forbidden();
     const input = await readJsonObject(request);
     if (input instanceof Response) return input;
     const name = typeof input.name === "string" ? input.name.trim() : "";
@@ -219,6 +220,7 @@ export async function PATCH(request: Request) {
   try {
     const actor = await authenticate(request);
     if (actor instanceof Response) return actor;
+    if (!(await hasPermission(actor.id, "user.update"))) return forbidden();
     const input = await readJsonObject(request);
     if (input instanceof Response) return input;
     if (!Number.isSafeInteger(input.id))

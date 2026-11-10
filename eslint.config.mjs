@@ -9,11 +9,24 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    ".next-e2e/**",
+    "playwright-report/**",
+    "test-results/**",
+    "blob-report/**",
+    ".playwright-mcp/**",
+    ".e2e/**",
     "out/**",
     "build/**",
     "next-env.d.ts",
     "app/generated/prisma/**",
   ]),
+  {
+    // Shared with Playwright's CommonJS loader, which cannot import the ESM constants file.
+    files: ["**/*.cjs"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;

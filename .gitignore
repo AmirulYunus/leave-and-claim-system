@@ -51,3 +51,12 @@ next-env.d.ts
 
 # Verification instances and their evidence
 /.verify/
+
+# Playwright end-to-end runs and the throwaway app
+/playwright-report/
+/test-results/
+/blob-report/
+/.playwright-mcp/
+/.e2e/
+/.next-e2e/
+/.e2e-plan/

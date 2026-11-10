@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp",
+        "--browser",
+        "chromium",
+        "--caps",
+        "devtools",
+        "--output-dir",
+        ".playwright-mcp",
+        "--save-session",
+        "--viewport-size",
+        "1280x720"
+      ]
+    }
+  }
+}

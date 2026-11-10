@@ -325,12 +325,52 @@ try {
   await upload("Tester", compassionateId, "notice.pdf", pdf);
   await decide(compassionateId);
 
+  // Twenty uploads at once stay within the 10-document cap.
+  const capDates = weekdays(`${year}-11-16`, 1);
+  const { id: capId } = await api(
+    "workspace",
+    "Tester",
+    "POST",
+    leave("Unpaid leave", capDates),
+    201,
+  );
+  for (const name of ["first.pdf", "second.pdf"])
+    await upload("Tester", capId, name, pdf);
+  const burst = await Promise.all(
+    Array.from({ length: 20 }, (_, index) => {
+      const form = new FormData();
+      form.set("request_id", String(capId));
+      form.set("file", new File([pdf], `extra-${index}.pdf`));
+      return fetch(`${baseUrl}/api/attachments`, {
+        method: "POST",
+        headers: { Cookie: sessions.Tester },
+        body: form,
+      }).then(async (response) => ({
+        status: response.status,
+        body: await response.json(),
+      }));
+    }),
+  );
+  const {
+    rows: [{ n: attachmentCount }],
+  } = await client.query(
+    "SELECT count(*)::int AS n FROM attachments WHERE request_id = $1",
+    [capId],
+  );
+  assert.equal(attachmentCount, 10, `attachments=${attachmentCount}`);
+  const refused = burst.filter((item) => item.status !== 201);
+  assert.equal(refused.length, 12);
+  for (const item of refused) {
+    assert.equal(item.status, 400, item.body.error ?? "upload");
+    assert.equal(item.body.error, "A request can have at most 10 documents.");
+  }
+
   const saved = (await api("workspace", "Tester")).requests.find(
     (request) => request.id === paternityId,
   );
   assert.equal(saved.details.birth_on, paternity[0]);
   console.log(
-    "PASS: maternity, paternity, marriage and compassionate rules, training categories and Annual charging, emergency and medical evidence, the 48-hour medical rule, and document access.",
+    "PASS: maternity, paternity, marriage and compassionate rules, training categories and Annual charging, emergency and medical evidence, the 48-hour medical rule, document access, and the 10-document cap.",
   );
 } catch (error) {
   console.error(error.message);
@@ -343,7 +383,9 @@ try {
     [prefix],
   );
   for (const { storage_key } of files.rows)
-    await unlink(path.resolve(".storage/uploads", storage_key)).catch(() => {});
+    await unlink(
+      path.resolve(process.env.UPLOAD_DIR ?? ".storage/uploads", storage_key),
+    ).catch(() => {});
   for (const table of ["attachments", "leave_entries"])
     await client.query(`DELETE FROM ${table} WHERE request_id IN ${ids}`, [
       prefix,

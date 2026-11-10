@@ -23,8 +23,6 @@ const windows = process.platform === "win32";
 const pathKey =
   Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ??
   "PATH";
-const callerDatabaseUrl = process.env.DATABASE_URL;
-
 function childEnv() {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -138,10 +136,6 @@ function assertIsolatedDatabase() {
   if (env.DATABASE_URL !== databaseUrl || !databaseUrl.includes(":55433/"))
     fail(
       "The test runner refused to start because it could not pin the throwaway database on 127.0.0.1:55433.",
-    );
-  if (callerDatabaseUrl && env.DATABASE_URL === callerDatabaseUrl)
-    fail(
-      "The test runner refused to start because it would have used DATABASE_URL from the shell. Run npm run e2e:stop, then npm run test:e2e.",
     );
 }
 

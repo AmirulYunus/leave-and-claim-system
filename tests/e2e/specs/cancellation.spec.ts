@@ -15,6 +15,7 @@ import {
   earnedAnnualHours,
   freshJoin,
   type YearPlan,
+  futureWeekday,
   yearPlan,
 } from "../support/rules";
 import {
@@ -34,6 +35,8 @@ const colleagueError =
   "Only the employee can request cancellation of future leave. HR can correct Emergency leave that has started.";
 const ownDecisionError =
   "You cannot decide the cancellation of your own leave. Another HR member or Admin must review it.";
+const cancelPrompt =
+  "Why do you want to cancel this leave? HR will review the cancellation; the leave stays approved until then.";
 
 function requireEarned(plan: YearPlan) {
   test.skip(
@@ -48,7 +51,7 @@ function requireEarned(plan: YearPlan) {
 }
 
 function futureDate(plan: YearPlan) {
-  const date = plan.weekdays.find((item) => item > plan.today);
+  const date = futureWeekday(plan);
   test.skip(
     date == null,
     `No weekday after ${plan.today} remains in ${plan.year}.`,
@@ -95,7 +98,7 @@ async function approveLeave(
 
 async function askToCancel(page: Page, note: string, reason: string | null) {
   await openMyLeave(page);
-  await answerDialogs(page, [reason]);
+  await answerDialogs(page, [reason], [cancelPrompt]);
   await requestRow(page, note)
     .getByRole("button", { name: "Request cancellation" })
     .click();
@@ -420,7 +423,7 @@ test.describe("Leave cancellation", () => {
 
     await test.step("A blank reason does not send the cancellation", async () => {
       await openMyLeave(page);
-      await answerDialogs(page, ["   ", null]);
+      await answerDialogs(page, ["   ", null], [cancelPrompt, cancelPrompt]);
       const row = requestRow(page, note);
       await row.getByRole("button", { name: "Request cancellation" }).click();
       await expect(

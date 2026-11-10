@@ -15,11 +15,11 @@ import {
   timesheetRow,
 } from "../support/ui";
 
-function flagBannerBug(sentence: string, line: number) {
+function knownBannerBug(sentence: string, line: number) {
   test.fail();
   test.info().annotations.push({
     type: "app-bug",
-    description: `The status banner prefixes "✓ " onto the refusal "${sentence}" (app/page.tsx:1021 renders the message set at app/page.tsx:${line}).`,
+    description: `The status banner prefixes "✓ " onto the refusal "${sentence}" (app/page.tsx:1021 renders the message set at app/page.tsx:${line}). The refusal must be an alert, not a success banner.`,
   });
 }
 
@@ -78,8 +78,9 @@ test.describe("Timesheet", () => {
         page.getByRole("button", { name: "Timesheet saved" }),
       ).toBeDisabled();
       expect(await timesheetHours(db, freshEmployee.email, date)).toEqual([]);
-      flagBannerBug("Worked hours must be between 0 and 24.", 1302);
-      await expectRefusal(page, "Worked hours must be between 0 and 24.");
+      await expect(
+        page.getByText("Worked hours must be between 0 and 24."),
+      ).toBeVisible();
     });
   });
 
@@ -120,14 +121,11 @@ test.describe("Timesheet", () => {
       await expect(hoursField(page, date)).toHaveValue("");
       expect(await timesheetHours(db, freshEmployee.email, date)).toEqual([]);
       expect(await leaveEntries(db, note)).toEqual([[date, 8]]);
-      flagBannerBug(
-        "Worked hours plus approved leave cannot exceed 8 hours on this date.",
-        1308,
-      );
-      await expectRefusal(
-        page,
-        "Worked hours plus approved leave cannot exceed 8 hours on this date.",
-      );
+      await expect(
+        page.getByText(
+          "Worked hours plus approved leave cannot exceed 8 hours on this date.",
+        ),
+      ).toBeVisible();
     });
   });
 
@@ -197,11 +195,9 @@ test.describe("Timesheet", () => {
       await page.getByLabel("Timesheet month").fill(shiftMonth(month));
       await expect(page.getByLabel("Timesheet month")).toHaveValue(month);
       expect(await timesheetHours(db, freshEmployee.email, date)).toEqual([]);
-      flagBannerBug("Save the current month before changing months.", 1216);
-      await expectRefusal(
-        page,
-        "Save the current month before changing months.",
-      );
+      await expect(
+        page.getByText("Save the current month before changing months."),
+      ).toBeVisible();
     });
   });
 
@@ -252,6 +248,76 @@ test.describe("Timesheet", () => {
       await expect(timesheetRow(page, date)).toContainText("8 / 8 h");
       expect(await timesheetHours(db, freshEmployee.email, date)).toEqual([0]);
       expect(await leaveEntries(db, note)).toEqual([[date, 8]]);
+    });
+  });
+
+  test("TS-BUG-01 a value above 24 is an alert, not a success banner", async ({
+    freshEmployee,
+  }) => {
+    const { month, date } = monthDay();
+    const sentence = "Worked hours must be between 0 and 24.";
+    const page = await freshEmployee.signedInPage();
+
+    await test.step("Enter 25 hours", async () => {
+      await openTimesheet(page, month);
+      await hoursField(page, date).fill("25");
+      knownBannerBug(sentence, 1302);
+      await expectRefusal(page, sentence);
+    });
+  });
+
+  test("TS-BUG-02 worked hours on a full leave day are an alert, not a success banner", async ({
+    freshEmployee,
+    hrPage,
+    uniqueTag,
+  }) => {
+    const plan = yearPlan();
+    test.skip(
+      plan.earnedHours == null,
+      `Annual leave is pending policy on ${plan.today} for a level 1 employee who joined ${freshJoin}.`,
+    );
+    test.skip(
+      (plan.earnedHours ?? 0) < 8,
+      `Only ${plan.earnedHours} annual hours are earned on ${plan.today}.`,
+    );
+    test.skip(
+      plan.weekdays.length === 0,
+      `No weekday after 31 March ${plan.year}.`,
+    );
+    const date = plan.weekdays[0];
+    const sentence =
+      "Worked hours plus approved leave cannot exceed 8 hours on this date.";
+    const note = `TS-BUG-02 ${uniqueTag}`;
+    const page = await freshEmployee.signedInPage();
+
+    await test.step("Approve a full day of leave", async () => {
+      await submitLeave(page, { start: date, end: date, note });
+      await expectSuccess(page, "Leave request saved for HR review.");
+      await decide(hrPage, note, "Approve");
+      await expectSuccess(hrPage, "Request approved and saved.");
+    });
+
+    await test.step("One worked hour on that date is an alert", async () => {
+      await openTimesheet(page, date.slice(0, 7));
+      await hoursField(page, date).fill("1");
+      knownBannerBug(sentence, 1308);
+      await expectRefusal(page, sentence);
+    });
+  });
+
+  test("TS-BUG-03 changing month with unsaved hours is an alert, not a success banner", async ({
+    freshEmployee,
+  }) => {
+    const { month, date } = monthDay();
+    const sentence = "Save the current month before changing months.";
+    const page = await freshEmployee.signedInPage();
+
+    await test.step("Enter hours and change the month", async () => {
+      await openTimesheet(page, month);
+      await hoursField(page, date).fill("8");
+      await page.getByLabel("Timesheet month").fill(shiftMonth(month));
+      knownBannerBug(sentence, 1216);
+      await expectRefusal(page, sentence);
     });
   });
 });

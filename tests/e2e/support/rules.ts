@@ -129,6 +129,11 @@ export function yearPlan(
   };
 }
 
+// weekdays[0] is today when today is a weekday. Callers that need a future date use this.
+export function futureWeekday(plan: YearPlan) {
+  return plan.weekdays.find((date) => date > plan.today);
+}
+
 export function overBalanceSpan(plan: YearPlan) {
   if (plan.earnedHours == null) return null;
   const needed = Math.floor(plan.earnedHours / 8) + 1;

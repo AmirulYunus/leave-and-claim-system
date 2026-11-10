@@ -3,7 +3,6 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import {
-  request as playwrightRequest,
   test as base,
   expect,
   type Browser,
@@ -12,6 +11,7 @@ import {
 } from "@playwright/test";
 import { root, seedPassword } from "./constants.cjs";
 import { signIn } from "./app";
+import { createTemporaryEmployee } from "./provision";
 
 const script = path.join(root, "tests/e2e/support/environment.mjs");
 
@@ -127,75 +127,6 @@ async function openSignedInPage(
   return { page, finish };
 }
 
-async function provisionEmployee(
-  origin: string,
-  hr: Account,
-  uniqueTag: string,
-): Promise<Omit<FreshEmployee, "signedInPage">> {
-  const temporaryPassword = `Tmp-${uniqueTag}-e2e-pw`;
-  const password = `New-${uniqueTag}-e2e-pw`;
-  const email = `e2e.${uniqueTag}@example.test`;
-  const name = `E2E ${uniqueTag}`;
-  const hrApi = await playwrightRequest.newContext({
-    baseURL: origin,
-    extraHTTPHeaders: { Origin: origin },
-  });
-  try {
-    const signedIn = await hrApi.post("/api/auth/session", {
-      data: { email: hr.email, password: hr.password },
-    });
-    if (!signedIn.ok())
-      throw new Error(`HR sign-in failed: ${await signedIn.text()}`);
-    const created = await hrApi.post("/api/employees", {
-      data: {
-        name,
-        email,
-        role: "Employee",
-        join_date: "2024-01-15",
-        temporary_password: temporaryPassword,
-        employment_type: "Full-time",
-        employee_level: 1,
-        probation_completed_on: "2024-04-15",
-        is_active: true,
-      },
-    });
-    if (!created.ok())
-      throw new Error(`Creating the employee failed: ${await created.text()}`);
-    const listed = await hrApi.get("/api/employees");
-    if (!listed.ok())
-      throw new Error(`Reading employees failed: ${await listed.text()}`);
-    const body = (await listed.json()) as {
-      employees?: { id: number; email: string }[];
-    };
-    const row = body.employees?.find((employee) => employee.email === email);
-    if (!row) throw new Error(`The new employee ${email} was not saved.`);
-    const employeeApi = await playwrightRequest.newContext({
-      baseURL: origin,
-      extraHTTPHeaders: { Origin: origin },
-    });
-    try {
-      const session = await employeeApi.post("/api/auth/session", {
-        data: { email, password: temporaryPassword },
-      });
-      if (!session.ok())
-        throw new Error(`Temporary sign-in failed: ${await session.text()}`);
-      const changed = await employeeApi.post("/api/auth/password", {
-        data: {
-          current_password: temporaryPassword,
-          new_password: password,
-        },
-      });
-      if (!changed.ok())
-        throw new Error(`Password change failed: ${await changed.text()}`);
-    } finally {
-      await employeeApi.dispose();
-    }
-    return { id: row.id, name, email, password };
-  } finally {
-    await hrApi.dispose();
-  }
-}
-
 type Fixtures = {
   accounts: Accounts;
   db: Database;
@@ -251,10 +182,14 @@ export const test = base.extend<Fixtures>({
     }
   },
   freshEmployee: async ({ browser, accounts, uniqueTag }, run, testInfo) => {
-    const created = await provisionEmployee(
-      baseURL(testInfo),
-      accounts.hr,
+    const created = await createTemporaryEmployee(
+      {
+        baseURL: baseURL(testInfo),
+        email: accounts.hr.email,
+        password: accounts.hr.password,
+      },
       uniqueTag,
+      { changePassword: true },
     );
     let opened: Awaited<ReturnType<typeof openSignedInPage>> | undefined;
     try {

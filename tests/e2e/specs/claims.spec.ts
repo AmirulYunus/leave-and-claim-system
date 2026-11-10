@@ -1,5 +1,32 @@
+import { type Locator, type Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { expectSuccess } from "../support/app";
+
+const zeroClaimSentence = "Enter a claim amount greater than zero.";
+const claimRangeSentence =
+  "Enter a claim amount from RM 0.01 to RM 100,000 with at most two decimal places.";
+
+async function expectClaimAmountRefused(
+  page: Page,
+  dialog: Locator,
+  amount: string,
+) {
+  const field = dialog.getByLabel("Amount (RM)");
+  const native = await field.evaluate(
+    (element: HTMLInputElement) => element.validationMessage,
+  );
+  const alert = page.getByRole("alert").filter({
+    hasText:
+      amount === "0"
+        ? zeroClaimSentence
+        : new RegExp(`${zeroClaimSentence}|${claimRangeSentence}`),
+  });
+  if (native) {
+    expect(native).toMatch(/0\.01/);
+    return;
+  }
+  await expect(alert).toBeVisible();
+}
 import {
   claimRequest,
   employeeId,
@@ -196,6 +223,7 @@ test.describe("Expense claims", () => {
       await expect(
         dialog.getByRole("heading", { name: "Submit an expense claim." }),
       ).toBeVisible();
+      await expectClaimAmountRefused(page, dialog, "0");
       await expect(
         page.getByRole("status").filter({ hasText: "✓ " }),
       ).toHaveCount(0);
@@ -204,6 +232,7 @@ test.describe("Expense claims", () => {
       await expect(
         dialog.getByRole("heading", { name: "Submit an expense claim." }),
       ).toBeVisible();
+      await expectClaimAmountRefused(page, dialog, "0.001");
       await expect(
         page.getByRole("status").filter({ hasText: "✓ " }),
       ).toHaveCount(0);

@@ -1,7 +1,13 @@
 import { test, expect } from "../support/fixtures";
 import { signIn } from "../support/app";
-import { employeeRecord, leaveRequest, requestCount } from "../support/records";
+import {
+  employeeRecord,
+  leaveRequest,
+  requestCount,
+  sqlString,
+} from "../support/records";
 import { leaveAmount, leaveSummary, yearPlan } from "../support/rules";
+import { createTemporaryEmployee } from "../support/provision";
 import { openApprovals, requestRow, submitLeave } from "../support/ui";
 
 test.describe("Role permissions", () => {
@@ -214,24 +220,61 @@ test.describe("Role permissions", () => {
 
   test("PERM-PERM-02 an employee cannot load employees or decide a request", async ({
     freshEmployee,
+    page,
+    accounts,
     db,
-  }) => {
-    const page = await freshEmployee.signedInPage();
+    uniqueTag,
+  }, testInfo) => {
+    const plan = yearPlan();
+    const earned = plan.earnedHours ?? 0;
+    test.skip(
+      plan.earnedHours == null,
+      `Annual leave is pending policy on ${plan.today}.`,
+    );
+    test.skip(
+      earned < 8,
+      `Only ${earned} annual hours are earned on ${plan.today}.`,
+    );
+    test.skip(
+      plan.weekdays.length === 0,
+      `No weekday after 31 March ${plan.year}.`,
+    );
+    const date = plan.weekdays[0];
+    const note = `PERM-PERM-02 ${uniqueTag}`;
+    const origin = testInfo.project.use.baseURL;
+    if (!origin) throw new Error("Set use.baseURL in playwright.config.ts.");
+    const colleague = await createTemporaryEmployee(
+      {
+        baseURL: origin,
+        email: accounts.hr.email,
+        password: accounts.hr.password,
+      },
+      `${uniqueTag}b`,
+      { changePassword: true },
+    );
+
+    await test.step("Another employee has a pending request", async () => {
+      await signIn(page, colleague.email, colleague.password);
+      await submitLeave(page, { start: date, end: date, note });
+      await expect(requestRow(page, note)).toContainText("Pending");
+    });
+
+    const employee = await freshEmployee.signedInPage();
     const beforeEmployees = await db.query(
       `SELECT count(*)::text FROM employees`,
     );
-    const beforeRequest = await db.query(
-      `SELECT coalesce(status, '') FROM requests WHERE id = 1`,
+    const requestId = await db.query(
+      `SELECT id::text FROM requests WHERE note = ${sqlString(note)}`,
     );
 
     await test.step("The employee calls the employee list and a decision", async () => {
-      const listed = await page.request.get("/api/employees");
+      const listed = await employee.request.get("/api/employees");
       expect(listed.status()).toBe(403);
       expect(((await listed.json()) as { error?: string }).error).toBe(
         "Forbidden",
       );
-      const decided = await page.request.patch("/api/workspace", {
-        data: { id: 1, status: "Approved" },
+      const decided = await employee.request.patch("/api/workspace", {
+        data: { id: Number(requestId[0][0]), status: "Approved" },
       });
       expect(decided.status()).toBe(403);
       expect(((await decided.json()) as { error?: string }).error).toBe(
@@ -240,30 +283,34 @@ test.describe("Role permissions", () => {
     });
 
     await test.step("My leave has no decision controls", async () => {
-      await page.getByRole("button", { name: "My leave", exact: true }).click();
+      await employee
+        .getByRole("button", { name: "My leave", exact: true })
+        .click();
       await expect(
-        page.getByRole("columnheader", { name: "Status" }),
+        employee.getByRole("columnheader", { name: "Status" }),
       ).toBeVisible();
       await expect(
-        page.getByRole("columnheader", { name: "Decision" }),
+        employee.getByRole("columnheader", { name: "Decision" }),
       ).toHaveCount(0);
       await expect(
-        page.getByRole("button", { name: "Approve", exact: true }),
+        employee.getByRole("button", { name: "Approve", exact: true }),
       ).toHaveCount(0);
       await expect(
-        page.getByRole("button", { name: "Reject", exact: true }),
+        employee.getByRole("button", { name: "Reject", exact: true }),
       ).toHaveCount(0);
     });
 
-    await test.step("Nothing was created or decided", async () => {
+    await test.step("The colleague's request stays pending with no reviewer", async () => {
       expect(await db.query(`SELECT count(*)::text FROM employees`)).toEqual(
         beforeEmployees,
       );
-      expect(
-        await db.query(
-          `SELECT coalesce(status, '') FROM requests WHERE id = 1`,
-        ),
-      ).toEqual(beforeRequest);
+      expect(await leaveRequest(db, note)).toMatchObject({
+        status: "Pending",
+        reviewerId: "",
+        reviewed: false,
+        email: colleague.email,
+      });
+      await expect(requestRow(page, note)).toContainText("Pending");
     });
   });
 

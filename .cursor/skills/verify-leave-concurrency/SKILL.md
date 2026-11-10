@@ -62,7 +62,7 @@ Not covered:
 
 - The hour arithmetic inside `validateLeaveEntries`: earned accrual, carry-forward split, the 8-hour daily cap. The model treats each request as one unit and only checks that the check runs under the lock.
 - The employee editor (`app/api/employees/route.ts`, lock `-1`). An HR edit that lowers an allowance does not re-check leave already held. That is a policy question, not a race: the same state results if the edit lands right after the submit.
-- Carry-forward confirmation (`app/api/carry-forward/route.ts`), attachment upload (`app/api/attachments/route.ts`, no lock), timesheets, and the email outbox sender (`scripts/notifications.ts`).
+- Carry-forward confirmation (`app/api/carry-forward/route.ts`), attachment upload (`app/api/attachments/route.ts` takes the employee lock and stays unmodelled), timesheets, and the email outbox sender (`scripts/notifications.ts`).
 
 ## Files
 

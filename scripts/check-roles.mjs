@@ -118,6 +118,23 @@ try {
     assert.equal(response.status, expected, `sign-in from ${origin}`);
   }
   await api("employees", "Employee", "GET", undefined, 403);
+  const emptyEmployee = [];
+  for (const method of ["POST", "PATCH"]) {
+    const response = await fetch(`${baseUrl}/api/employees`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: sessions.Employee,
+      },
+      body: "{}",
+    });
+    const result = await response.json();
+    if (response.status !== 403)
+      emptyEmployee.push(
+        `${method} /api/employees {} -> ${response.status} ${result.error}`,
+      );
+  }
+  assert.deepEqual(emptyEmployee, []);
   await api("employees", "Employee", "POST", input, 403);
   await api(
     "workspace",
@@ -315,7 +332,7 @@ try {
   );
   await api("workspace", "Admin", "PATCH", { id: own.id, status: "Approved" });
   console.log(
-    "PASS: sign-in required; temporary passwords must be changed and can be reset; Employee access denied; HR creates Employee and HR profiles, edits Employee profiles and employment details, maintains departments and cost centres, and cannot create Admin or assign roles; Admin creates and assigns roles; requests scoped by employee ID; nobody decides their own request; malformed JSON is rejected and writes nothing.",
+    "PASS: sign-in required; temporary passwords must be changed and can be reset; Employee access denied; HR creates Employee and HR profiles, edits Employee profiles and employment details, maintains departments and cost centres, and cannot create Admin or assign roles; Admin creates and assigns roles; requests scoped by employee ID; nobody decides their own request; an empty employee write is refused before validation; malformed JSON is rejected and writes nothing.",
   );
 } catch (error) {
   console.error(error.message);

@@ -1,4 +1,5 @@
 import { authenticate } from "../../lib/auth";
+import { readJsonObject } from "../../lib/json-body";
 import { hasPermission } from "../../lib/permissions";
 import { database } from "../../lib/prisma";
 import { malaysiaDate } from "../../lib/entitlement";
@@ -37,7 +38,8 @@ export async function POST(request: Request) {
   try {
     const actor = await authenticate(request);
     if (actor instanceof Response) return actor;
-    const input = await request.json();
+    const input = await readJsonObject(request);
+    if (input instanceof Response) return input;
     if (
       !Number.isSafeInteger(input.request_id) ||
       typeof input.reason !== "string"
@@ -99,7 +101,8 @@ export async function PATCH(request: Request) {
     if (reviewer instanceof Response) return reviewer;
     if (!(await hasPermission(reviewer.id, "leave.approve")))
       throw new Refusal("Forbidden", 403);
-    const input = await request.json();
+    const input = await readJsonObject(request);
+    if (input instanceof Response) return input;
     if (
       !Number.isSafeInteger(input.id) ||
       !["Approved", "Rejected"].includes(input.status)

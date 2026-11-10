@@ -1,6 +1,7 @@
 import { hasPermission } from "../../lib/permissions";
 import { database } from "../../lib/prisma";
 import { authenticate } from "../../lib/auth";
+import { readJsonObject } from "../../lib/json-body";
 import { Prisma } from "../../generated/prisma/client";
 import type { Permission } from "../../lib/permission-policy";
 
@@ -72,7 +73,8 @@ export async function POST(request: Request) {
   try {
     const denied = await deny(request, "organisation.manage");
     if (denied) return denied;
-    const input = await request.json();
+    const input = await readJsonObject(request);
+    if (input instanceof Response) return input;
     checkType(input.type);
     const data = { name: name(input) };
     if (input.type === "department")
@@ -90,7 +92,8 @@ export async function PATCH(request: Request) {
   try {
     const denied = await deny(request, "organisation.manage");
     if (denied) return denied;
-    const input = await request.json();
+    const input = await readJsonObject(request);
+    if (input instanceof Response) return input;
     checkType(input.type);
     if (!Number.isSafeInteger(input.id) || typeof input.is_active !== "boolean")
       throw new ValidationError("Invalid organisation entry.");

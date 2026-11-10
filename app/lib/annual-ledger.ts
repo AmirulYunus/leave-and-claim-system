@@ -79,17 +79,20 @@ export function confirmedCarryForward(
 }
 
 // Earned Annual Leave left unused in `year` (to date, if it is the current
-// year), in whole half days. Missing employment details count as none.
+// year), in whole half days. A held entitlement stays pending and comes back
+// as its reason.
 export async function unusedAnnualHours(
   tx: Tx,
   employee: Parameters<typeof employmentOf>[0] & { id: number },
   year: number,
   today: string,
-) {
+): Promise<{ hours: number } | { reason: string }> {
   const earned = annualEarnedHours(employmentOf(employee), year, today);
-  if (earned.hours === undefined) return 0;
+  if (earned.hours === undefined) return { reason: earned.reason };
   const use = await approvedAnnualUse(tx, employee.id, year);
-  return Math.max(0, Math.floor((earned.hours - use.earned) / 4) * 4);
+  return {
+    hours: Math.max(0, Math.floor((earned.hours - use.earned) / 4) * 4),
+  };
 }
 
 // Once a year's carry-forward is confirmed its Annual Leave can no longer

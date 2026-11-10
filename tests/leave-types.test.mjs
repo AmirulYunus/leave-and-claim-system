@@ -109,6 +109,20 @@ test("weekday leave uses every weekday with one 4 or 8 hour duration", () => {
   }
 });
 
+test("an empty weekday schedule returns a message", () => {
+  assert.equal(
+    scheduleProblem("Annual leave", []),
+    "Annual leave uses one duration for every date: half day (4 hours) or full day (8 hours).",
+  );
+});
+
+test("an empty fixed-length schedule returns a message", () => {
+  assert.equal(
+    scheduleProblem("Paternity leave", []),
+    "Paternity leave covers 7 consecutive calendar days in full days.",
+  );
+});
+
 test("submission details are required per category", () => {
   assert.notEqual(submit("Maternity leave", {}), "");
   assert.equal(

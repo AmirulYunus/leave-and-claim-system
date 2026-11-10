@@ -1,5 +1,6 @@
 import { hasPermission } from "../../lib/permissions";
 import { authenticate } from "../../lib/auth";
+import { claimAmountProblem } from "../../lib/claim-amount";
 import { readJsonObject } from "../../lib/json-body";
 import { database } from "../../lib/prisma";
 import { datesBetween, validateLeave, type LeaveEntry } from "../../lib/time";
@@ -432,17 +433,10 @@ export async function POST(request: Request) {
       throw new ValidationError("Invalid category.");
     const details =
       input.kind === "Leave" ? leaveDetails(input.category, input) : null;
-    if (
-      input.kind === "Claim" &&
-      (typeof input.value !== "number" ||
-        !Number.isFinite(input.value) ||
-        input.value <= 0 ||
-        input.value > 100000 ||
-        Math.abs(input.value * 100 - Math.round(input.value * 100)) > 0.000001)
-    )
-      throw new ValidationError(
-        "Enter a claim amount from RM 0.01 to RM 100,000 with at most two decimal places.",
-      );
+    if (input.kind === "Claim") {
+      const amount = claimAmountProblem(input.value);
+      if (amount) throw new ValidationError(amount);
+    }
     const created = await database().$transaction(async (tx) => {
       const employee = await getEmployeeProfile(tx, actor.id);
       if (

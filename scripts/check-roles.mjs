@@ -35,10 +35,65 @@ async function api(path, who, method = "GET", body, expected = 200) {
   return result;
 }
 
+async function rowCounts() {
+  const { rows } = await client.query(
+    `SELECT
+      (SELECT count(*)::int FROM requests) AS requests,
+      (SELECT count(*)::int FROM leave_entries) AS leave_entries,
+      (SELECT count(*)::int FROM claims) AS claims,
+      (SELECT count(*)::int FROM timesheet_entries) AS timesheet_entries,
+      (SELECT count(*)::int FROM cancellations) AS cancellations,
+      (SELECT count(*)::int FROM carry_forward_exceptions) AS carry_forward_exceptions,
+      (SELECT count(*)::int FROM carry_forwards) AS carry_forwards,
+      (SELECT count(*)::int FROM employees) AS employees,
+      (SELECT count(*)::int FROM departments) AS departments,
+      (SELECT count(*)::int FROM cost_centres) AS cost_centres,
+      (SELECT count(*)::int FROM notifications) AS notifications`,
+  );
+  return rows[0];
+}
+
+async function rawJson(path, who, method, raw) {
+  const response = await fetch(`${baseUrl}/api/${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      Origin: baseUrl,
+      Cookie: sessions[who],
+    },
+    body: raw,
+  });
+  const result = await response.json();
+  assert.equal(
+    response.status,
+    400,
+    `${method} ${path} body ${raw} -> ${response.status} ${result.error}`,
+  );
+  assert.equal(result.error, "Send a JSON object.");
+}
+
+const malformedJson = [
+  ["workspace", "POST", "Employee"],
+  ["workspace", "PATCH", "HR"],
+  ["workspace", "PUT", "Employee"],
+  ["cancellations", "POST", "Employee"],
+  ["cancellations", "PATCH", "HR"],
+  ["carry-forward", "POST", "HR"],
+  ["employees", "POST", "HR"],
+  ["employees", "PATCH", "HR"],
+  ["organisation", "POST", "HR"],
+  ["organisation", "PATCH", "HR"],
+];
+
 try {
   await client.connect();
   mark = await outboxMark(client);
   sessions = await demoSessions();
+  const beforeRows = await rowCounts();
+  for (const [path, method, who] of malformedJson) {
+    for (const raw of ["{", "null"]) await rawJson(path, who, method, raw);
+  }
+  assert.deepEqual(await rowCounts(), beforeRows);
   const input = {
     name: "Permission check",
     email: createdEmails[0],
@@ -260,7 +315,7 @@ try {
   );
   await api("workspace", "Admin", "PATCH", { id: own.id, status: "Approved" });
   console.log(
-    "PASS: sign-in required; temporary passwords must be changed and can be reset; Employee access denied; HR creates Employee and HR profiles, edits Employee profiles and employment details, maintains departments and cost centres, and cannot create Admin or assign roles; Admin creates and assigns roles; requests scoped by employee ID; nobody decides their own request.",
+    "PASS: sign-in required; temporary passwords must be changed and can be reset; Employee access denied; HR creates Employee and HR profiles, edits Employee profiles and employment details, maintains departments and cost centres, and cannot create Admin or assign roles; Admin creates and assigns roles; requests scoped by employee ID; nobody decides their own request; malformed JSON is rejected and writes nothing.",
   );
 } catch (error) {
   console.error(error.message);

@@ -32,6 +32,8 @@ async function api(path, who, method = "GET", body, expected = 200) {
 }
 
 let employeeId;
+let blankEmail;
+let blankEmployeeId;
 try {
   await client.connect();
   mark = await outboxMark(client);
@@ -123,6 +125,50 @@ try {
   const own = (await api("workspace", "Employee")).entitlements.carryForward;
   assert.equal(own.useBy, `${year}-03-31`);
   assert.ok(own.remaining <= own.hours);
+  blankEmail = `${prefix}-blank@example.test`;
+  await api(
+    "employees",
+    "HR",
+    "POST",
+    {
+      name: `Blank ${prefix}`,
+      email: blankEmail,
+      join_date: `${year - 1}-06-01`,
+      temporary_password: "temporary-pass-1",
+    },
+    201,
+  );
+  const blankView = await api("carry-forward", "HR");
+  const blank = blankView.rows.find((r) => r.name === `Blank ${prefix}`);
+  assert.ok(blank, "active employee with blank HR details is listed");
+  blankEmployeeId = blank.employee_id;
+  assert.equal(
+    blank.draft,
+    null,
+    "blank HR details stay held, not a zero draft",
+  );
+  assert.equal(typeof blank.held, "string");
+  assert.ok(blank.held.length > 0);
+  if (blankView.canConfirm) {
+    const refused = await api(
+      "carry-forward",
+      "HR",
+      "POST",
+      {
+        action: "confirm",
+        employee_id: blank.employee_id,
+        source_year: blankView.sourceYear,
+      },
+      400,
+    );
+    assert.match(refused.error, /on hold/);
+    assert.ok(refused.error.includes(String(blankView.sourceYear)));
+    assert.ok(refused.error.includes(blank.held));
+  } else {
+    console.log(
+      `Confirm window is closed on ${today}; asserted the held GET row and did not confirm.`,
+    );
+  }
   console.log(
     `PASS (${asOf}): carry-forward preview, limits, written exceptions and date windows enforced; employees refused.`,
   );
@@ -131,11 +177,12 @@ try {
   process.exitCode = 1;
 } finally {
   if (mark !== undefined) await clearOutboxSince(client, mark);
-  if (employeeId)
-    for (const table of ["carry_forward_exceptions", "carry_forwards"])
-      await client.query(`DELETE FROM ${table} WHERE employee_id = $1`, [
-        employeeId,
-      ]);
-  await client.query("DELETE FROM employees WHERE email = $1", [email]);
+  for (const id of [employeeId, blankEmployeeId])
+    if (id)
+      for (const table of ["carry_forward_exceptions", "carry_forwards"])
+        await client.query(`DELETE FROM ${table} WHERE employee_id = $1`, [id]);
+  for (const address of [email, blankEmail])
+    if (address)
+      await client.query("DELETE FROM employees WHERE email = $1", [address]);
   await client.end();
 }

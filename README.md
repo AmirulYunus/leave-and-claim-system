@@ -47,7 +47,7 @@ Leave and claim submissions and HR decisions save immediately. Timesheet edits a
 
 ## Development boundary
 
-Every API handler requires a signed-in session and checks the employee's current database role: Employee sees their own requests; HR reviews requests and maintains Employee and HR profiles; Admin can also create Admin profiles and change roles. Cross-origin requests are rejected. Before staging or production, add sign-in rate limiting and serve the app over HTTPS so the session cookie is marked `Secure`.
+Every API handler except sign-in and sign-out requires a signed-in session and checks the employee's current database role. Sign-out succeeds without a session, so a repeated or expired sign-out is harmless. Roles: Employee sees their own requests; HR reviews requests and maintains Employee and HR profiles; Admin can also create Admin profiles and change roles. Cross-origin requests are rejected. Before staging or production, add sign-in rate limiting and serve the app over HTTPS so the session cookie is marked `Secure`.
 
 ## Leave entitlements
 

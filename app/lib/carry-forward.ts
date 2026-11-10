@@ -1,6 +1,4 @@
-// Annual Leave carry-forward, ported from the Dataverse CarryForwardDraft,
-// CarryForwardAllocation and CarryForwardExceptionPolicy rules. Amounts are
-// hours in half-day (4-hour) steps. Unused leave above the limit is recorded,
+// Annual Leave carry-forward. Amounts are hours in half-day (4-hour) steps. Unused leave above the limit is recorded,
 // never expired or forfeited by this code.
 import type { LeaveEntry } from "./time";
 

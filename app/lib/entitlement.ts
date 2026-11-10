@@ -1,5 +1,4 @@
-// Leave entitlement rates and annual accrual, ported from the Dataverse
-// EntitlementCalculator and CalendarAnnualGrant rules. Dates are YYYY-MM-DD
+// Leave entitlement rates and annual accrual. Dates are YYYY-MM-DD
 // calendar dates in Malaysia time. Missing or unsupported inputs never become a
 // zero entitlement; they produce a pending status with the reason.
 

@@ -1,4 +1,3 @@
-// Cases ported from the Dataverse EntitlementChecks and CalendarGrantChecks.
 import test from "node:test";
 import assert from "node:assert/strict";
 import {

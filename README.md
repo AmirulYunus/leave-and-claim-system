@@ -51,7 +51,7 @@ Every API handler requires a signed-in session and checks the employee's current
 
 ## Leave entitlements
 
-`app/lib/entitlement.ts` implements the entitlement rules carried over from the Dataverse solution; `tests/entitlement.test.mjs` contains the original test cases. Balances run per calendar year in Malaysia time, and new requests must fall in the current year.
+`app/lib/entitlement.ts` implements the entitlement rules (see `docs/leave-rules/entitlement-inputs.md`); `tests/entitlement.test.mjs` covers them. Balances run per calendar year in Malaysia time, and new requests must fall in the current year.
 
 - **Annual leave:** a full-year rate of the employee-level base (14/14/15/18 days for levels 1–4) plus a service reward (+1 day from 2 completed years, +2 from 4, +3 from 6), never below the statutory minimum (8/12/16 days). It is earned monthly: each completed calendar month adds its rate, the joining month counts once it ends, and the running total is rounded up once to the next half day. Only leave earned by today can be used, including for future dates.
 - **Medical leave:** 14/18/22 days for under 2, 2–5 and 5 or more completed years. **Hospitalisation leave:** a separate 60 days.
@@ -59,7 +59,7 @@ Every API handler requires a signed-in session and checks the employee's current
 
 ## Leave types
 
-`app/lib/leave-types.ts` holds the category rules carried over from the Dataverse solution (see `scripts/dataverse/LEAVE_RULES_RECHECK_2026-10-25.md`). HR approves every type.
+`app/lib/leave-types.ts` holds the category rules (see `docs/leave-rules/leave-categories.md`). HR approves every type.
 
 - **Durations:** annual, medical, hospitalisation, emergency, training and unpaid leave cover every weekday from the start to the end date, with one duration for every date: half day (4 hours) or full day (8 hours). Fractional hours and weekend dates are refused.
 - **Medical and hospitalisation leave:** HR cannot approve them until a medical certificate is attached, and must check that it is valid. Medical leave must be submitted within 48 hours of its start date, measured from midnight Malaysia time.
@@ -73,7 +73,7 @@ Every API handler requires a signed-in session and checks the employee's current
 
 ## Cancelling approved leave
 
-`app/lib/cancellation.ts` holds the cancellation rules carried over from the Dataverse solution.
+`app/lib/cancellation.ts` holds the cancellation rules.
 
 - Only the employee can ask to cancel their approved leave, with a reason, and only while every date is still in the future. Cancelling leave that has started or been taken is on hold.
 - The leave stays approved, and keeps using its balance, while the cancellation is pending; only one can be pending at a time.
@@ -83,7 +83,7 @@ Every API handler requires a signed-in session and checks the employee's current
 
 ## Annual Leave carry-forward
 
-`app/lib/carry-forward.ts` and `app/lib/annual-ledger.ts` carry over the Dataverse carry-forward rules. HR manages them on the Employees page.
+`app/lib/carry-forward.ts` and `app/lib/annual-ledger.ts` implement the carry-forward rules (see `docs/leave-rules/carry-forward-and-calendar.md`). HR manages them on the Employees page.
 
 - Up to 5 days (40 hours) of a year's unused earned Annual Leave carries into the next year. Unused leave above the limit is recorded, never expired or forfeited by the app.
 - HR may record a written approval for a higher limit (more than 5 days, in half days, up to 1,000 hours) with its document reference, from 1 October to 15 December of the closing year.

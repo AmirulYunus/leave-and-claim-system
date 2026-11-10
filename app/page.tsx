@@ -62,7 +62,8 @@ type CarryForwardRow = {
     limit: number;
     carry: number;
     remainder: number;
-  };
+  } | null;
+  held: string | null;
   exception: { limit_hours: number; document_reference: string } | null;
   confirmed: {
     carry_hours: number;
@@ -726,6 +727,7 @@ export default function Home() {
       );
       if (!body.document_reference) return;
     } else {
+      if (!row.draft) return;
       const answer = window.prompt(
         `Carry forward how many days for ${row.name}? Calculated: ${days(row.draft.carry)} days. You may only reduce it.`,
         String(days(row.draft.carry)),
@@ -1689,31 +1691,49 @@ export default function Home() {
                     {carryForward.rows.map((row) => (
                       <tr key={row.employee_id}>
                         <td>{row.name}</td>
-                        <td>{days(row.draft.unusedHours)} days</td>
-                        <td>
-                          {days(row.draft.limit)} days
-                          {row.exception && (
-                            <small className="request-note">
-                              Written approval:{" "}
-                              {row.exception.document_reference}
-                            </small>
-                          )}
-                        </td>
-                        <td>
-                          {days(row.confirmed?.carry_hours ?? row.draft.carry)}{" "}
-                          days
-                        </td>
+                        {row.draft ? (
+                          <>
+                            <td>{days(row.draft.unusedHours)} days</td>
+                            <td>
+                              {days(row.draft.limit)} days
+                              {row.exception && (
+                                <small className="request-note">
+                                  Written approval:{" "}
+                                  {row.exception.document_reference}
+                                </small>
+                              )}
+                            </td>
+                            <td>
+                              {days(
+                                row.confirmed?.carry_hours ?? row.draft.carry,
+                              )}{" "}
+                              days
+                            </td>
+                          </>
+                        ) : (
+                          <td colSpan={3}>
+                            {row.held}
+                            {row.exception && (
+                              <small className="request-note">
+                                Written approval:{" "}
+                                {row.exception.document_reference}
+                              </small>
+                            )}
+                          </td>
+                        )}
                         <td>{row.confirmed ? "Confirmed" : "Not confirmed"}</td>
                         <td>
-                          {carryForward.canConfirm && !row.confirmed && (
-                            <button
-                              className="request-action"
-                              disabled={busy}
-                              onClick={() => saveCarryForward(row, "confirm")}
-                            >
-                              Confirm
-                            </button>
-                          )}
+                          {carryForward.canConfirm &&
+                            !row.confirmed &&
+                            row.draft && (
+                              <button
+                                className="request-action"
+                                disabled={busy}
+                                onClick={() => saveCarryForward(row, "confirm")}
+                              >
+                                Confirm
+                              </button>
+                            )}
                           {carryForward.canRecordException &&
                             !row.exception && (
                               <button

@@ -80,6 +80,7 @@ export async function GET(request: Request) {
             sourceYear,
             today,
           );
+          const held = "reason" in unused ? unused.reason : null;
           const exception = await tx.carry_forward_exceptions.findUnique({
             where: {
               employee_id_source_year: {
@@ -96,7 +97,11 @@ export async function GET(request: Request) {
           return {
             employee_id: employee.id,
             name: employee.name,
-            draft: carryForwardDraft(unused, exception?.limit_hours),
+            draft:
+              "hours" in unused
+                ? carryForwardDraft(unused.hours, exception?.limit_hours)
+                : null,
+            held,
             exception: exception && {
               limit_hours: exception.limit_hours,
               document_reference: exception.document_reference,
@@ -190,7 +195,11 @@ export async function POST(request: Request) {
         input.source_year,
         today,
       );
-      const draft = carryForwardDraft(unused, exception?.limit_hours);
+      if ("reason" in unused)
+        throw new Refusal(
+          `${input.source_year} Annual Leave is on hold: ${unused.reason} Resolve it before confirming.`,
+        );
+      const draft = carryForwardDraft(unused.hours, exception?.limit_hours);
       const carryHours = input.carry_hours ?? draft.carry;
       const reason = typeof input.reason === "string" ? input.reason : "";
       const problem = confirmationProblem({
@@ -206,7 +215,7 @@ export async function POST(request: Request) {
         data: {
           employee_id: employee.id,
           source_year: input.source_year,
-          unused_hours: unused,
+          unused_hours: unused.hours,
           limit_hours: draft.limit,
           carry_hours: carryHours,
           reason: reason.trim() || null,

@@ -272,6 +272,10 @@ async function validateLeaveEntries(
     if (balance === "Annual leave") {
       const useBy = carryUseBy(year);
       const credit = await confirmedCarryForward(tx, employee.id, year - 1);
+      const priorUnusedHours = async () => {
+        const unused = await unusedAnnualHours(tx, employee, year - 1, today);
+        return "hours" in unused ? unused.hours : 0;
+      };
       // Wait for HR's carry-forward decision while it can still be made
       // (until 31 March); afterwards the leave is paid from earned leave.
       if (
@@ -279,7 +283,7 @@ async function validateLeaveEntries(
         !credit &&
         today <= useBy &&
         entries.some((entry) => entry.date <= useBy) &&
-        (await unusedAnnualHours(tx, employee, year - 1, today)) > 0
+        (await priorUnusedHours()) > 0
       )
         throw new ValidationError(
           `HR must confirm the ${year - 1} Annual Leave carry-forward before January–March ${year} Annual Leave can be approved.`,

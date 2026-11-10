@@ -263,11 +263,26 @@ async function serve() {
     { cwd: root, env, stdio: "inherit", windowsHide: true },
   );
   const next = nextChild;
-  const exitCode = await new Promise((resolve, reject) => {
+  const exited = new Promise((resolve, reject) => {
     next.once("error", reject);
     next.once("exit", (code) => resolve(code ?? 1));
   });
-  process.exitCode = exitCode;
+  announceReady(exited);
+  process.exitCode = await exited;
+}
+
+async function announceReady(exited) {
+  let done = false;
+  exited.finally(() => (done = true)).catch(() => {});
+  while (!done) {
+    try {
+      if ((await fetch(appUrl)).ok) {
+        console.log(`READY ${appUrl}`);
+        return;
+      }
+    } catch {}
+    await sleep(1000);
+  }
 }
 
 function stop() {

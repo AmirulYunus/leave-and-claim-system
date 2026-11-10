@@ -35,7 +35,7 @@ Demo balances are not company policy. Compute an expected balance from the rules
 
 If `http://127.0.0.1:3200` is not already this test app, start `npm run e2e:env` in the background from the repo root.
 
-`npm run e2e:env` prints `Test database leave-e2e-db is ready.` before Next.js is listening. Wait until the log shows Next.js Ready, or until `http://127.0.0.1:3200` responds. The script does not print a line whose text is only `READY`.
+Wait until the log prints `READY http://127.0.0.1:3200`. The earlier line `Test database leave-e2e-db is ready.` comes before the app is listening.
 
 If the log says the test app is already running, use that instance. If it says port 3200 is in use and this test app is not the listener, stop and tell the tester. Do not kill an unknown process. Suggest `npm run e2e:stop` only when the stuck process is a previous test app.
 

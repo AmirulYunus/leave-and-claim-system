@@ -1,5 +1,5 @@
 // Sign-in helpers for the local check scripts. Load .env.local before use.
-export const baseUrl = "http://localhost:3000";
+export const baseUrl = process.env.APP_URL ?? "http://localhost:3000";
 export const demoEmails = {
   Employee: "amirul@example.test",
   HR: "hr@example.test",

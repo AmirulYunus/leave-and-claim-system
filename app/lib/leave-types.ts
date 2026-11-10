@@ -1,8 +1,7 @@
 import { datesBetween, isWeekday, type LeaveEntry } from "./time";
 
-// Leave categories and their date, duration, detail and approval rules, ported
-// from the Dataverse plug-ins (LEAVE_RULES_RECHECK_2026-10-25.md). HR is the
-// approver in this application. Each function returns "" when the rule passes
+// Leave categories and their date, duration, detail and approval rules
+// (docs/leave-rules/leave-categories.md). HR is the approver. Each function returns "" when the rule passes
 // or the message to show.
 
 export const leaveCategories = [

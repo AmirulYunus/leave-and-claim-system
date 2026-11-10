@@ -1,5 +1,4 @@
-// Plain-text email content, adapted from the Dataverse notification flows.
-// Messages name the request and decision only; reasons, medical details and
+// Plain-text email content. Messages name the request and decision only; reasons, medical details and
 // documents are never included.
 export type Message = { subject: string; body: string };
 

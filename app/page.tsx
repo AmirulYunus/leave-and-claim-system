@@ -1940,10 +1940,16 @@ export default function Home() {
                   Active employee
                 </label>
               )}
-              <p className="field-help">
-                Leave entitlements stay pending until HR sets the join date,
-                employment type and employee level.
-              </p>
+              {!(
+                employeeEditor.join_date &&
+                employeeEditor.employment_type &&
+                employeeEditor.employee_level
+              ) && (
+                <p className="field-help">
+                  Leave entitlements stay pending until HR sets the join date,
+                  employment type and employee level.
+                </p>
+              )}
               <label>
                 {employeeEditor.id
                   ? "Reset temporary password"
@@ -2191,10 +2197,6 @@ export default function Home() {
                       required
                     />
                   </label>
-                  <p className="field-help">
-                    Receipt uploads will be added when the database is
-                    connected.
-                  </p>
                 </>
               )}
               {modal === "Leave" && (

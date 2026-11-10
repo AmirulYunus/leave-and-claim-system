@@ -1,5 +1,4 @@
-// Cancelling approved leave, ported from the Dataverse FutureCancellation
-// rules. The original request stays Approved, and keeps using its balance,
+// Cancelling approved leave. The original request stays Approved, and keeps using its balance,
 // until HR approves the cancellation; it then becomes Cancelled, which returns
 // exactly the hours it used. Cancelling leave that has started is on hold,
 // except HR's reasoned correction of approved Emergency leave.

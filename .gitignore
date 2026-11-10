@@ -49,5 +49,5 @@ next-env.d.ts
 # Uploaded supporting documents in local development
 /.storage/
 
-# Local Dataverse audit exports can contain employee details
-/scripts/dataverse/annual-credit-audit-*.json
+# Verification instances and their evidence
+/.verify/

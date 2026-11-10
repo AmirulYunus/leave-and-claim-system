@@ -1,5 +1,6 @@
 import { hasPermission } from "../../lib/permissions";
 import { authenticate } from "../../lib/auth";
+import { readJsonObject } from "../../lib/json-body";
 import { database } from "../../lib/prisma";
 import { datesBetween, validateLeave, type LeaveEntry } from "../../lib/time";
 import {
@@ -405,7 +406,8 @@ export async function POST(request: Request) {
   try {
     const actor = await authenticate(request);
     if (actor instanceof Response) return actor;
-    const input = await request.json();
+    const input = await readJsonObject(request);
+    if (input instanceof Response) return input;
     if (
       !["Leave", "Claim"].includes(input.kind) ||
       typeof input.note !== "string" ||
@@ -514,7 +516,8 @@ export async function PATCH(request: Request) {
         { error: "Forbidden", message: "Forbidden" },
         { status: 403 },
       );
-    const input = await request.json();
+    const input = await readJsonObject(request);
+    if (input instanceof Response) return input;
     if (
       !Number.isSafeInteger(input.id) ||
       !["Approved", "Rejected"].includes(input.status)
@@ -662,7 +665,8 @@ export async function PUT(request: Request) {
   try {
     const actor = await authenticate(request);
     if (actor instanceof Response) return actor;
-    const input = await request.json();
+    const input = await readJsonObject(request);
+    if (input instanceof Response) return input;
     if (
       typeof input.month !== "string" ||
       !/^\d{4}-(0[1-9]|1[0-2])$/.test(input.month) ||

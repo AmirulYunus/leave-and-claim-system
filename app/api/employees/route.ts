@@ -1,6 +1,7 @@
 import { hasPermission } from "../../lib/permissions";
 import { database } from "../../lib/prisma";
 import { authenticate } from "../../lib/auth";
+import { readJsonObject } from "../../lib/json-body";
 import { hashPassword } from "../../lib/password";
 import { passwordProblem } from "../../lib/password-rules";
 import { endOtherSessions } from "../../lib/session";
@@ -152,7 +153,9 @@ export async function POST(request: Request) {
   try {
     const actor = await authenticate(request);
     if (actor instanceof Response) return actor;
-    const input = await request.json();
+    if (!(await hasPermission(actor.id, "user.create"))) return forbidden();
+    const input = await readJsonObject(request);
+    if (input instanceof Response) return input;
     const name = typeof input.name === "string" ? input.name.trim() : "";
     const email =
       typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
@@ -217,7 +220,9 @@ export async function PATCH(request: Request) {
   try {
     const actor = await authenticate(request);
     if (actor instanceof Response) return actor;
-    const input = await request.json();
+    if (!(await hasPermission(actor.id, "user.update"))) return forbidden();
+    const input = await readJsonObject(request);
+    if (input instanceof Response) return input;
     if (!Number.isSafeInteger(input.id))
       throw new ValidationError("Invalid employee.");
     const name = typeof input.name === "string" ? input.name.trim() : "";

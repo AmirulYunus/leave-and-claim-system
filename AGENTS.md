@@ -8,6 +8,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
+## UI tests
+
+For UI testing work, follow the `ui-test` skill at `.cursor/skills/ui-test/SKILL.md`.
+
 ## Company leave policy
 
 Before implementing leave balances, eligibility, approvals, or date calculations, read `LEAVE_POLICY.md` for confirmed company decisions, statutory baselines, official sources, and unresolved policy questions. The annual leave rate is the employee-level base (14/14/15/18 days for levels 1–4) plus the completed-service reward, never below the statutory minimum; it is earned monthly under the HR approval workflow. Employee, HR, and Admin are separate roles; there is no Superior role. Admin is the developer superuser and creates HR accounts; HR can create HR and Employee accounts and approves leave and claim requests. Category, carry-forward, calendar and entitlement-input rules are in `docs/leave-rules/`. Do not treat demo values as company policy.

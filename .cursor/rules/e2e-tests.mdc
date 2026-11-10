@@ -1,0 +1,33 @@
+---
+description: Conventions and safety rules for Playwright UI tests
+globs: tests/e2e/**,playwright.config.ts
+alwaysApply: false
+---
+
+# UI test conventions
+
+`baseURL` in `playwright.config.ts` stays `http://127.0.0.1:3200`. Do not change it to a non-loopback host. Do not point `DATABASE_URL` at anything but the throwaway database on `127.0.0.1:55433`, container `leave-e2e-db`.
+
+Do not delete `tests/e2e/support/global-setup.ts`. Do not remove `globalSetup` from `playwright.config.ts`. Do not edit `app/` to make a test pass.
+
+One `test.describe` per feature area. The title starts with the scenario id.
+
+```ts
+test("LEAVE-NEG-03 weekend dates are refused", async ({ freshEmployee, db }) => {
+  await test.step("Submit a Saturday through Sunday range", async () => {
+    // Role and label locators only. No page.waitForTimeout.
+  });
+});
+```
+
+Isolate rows with `freshEmployee` or `uniqueTag`. Assert the visible outcome and the database row. A negative asserts that nothing was written for that actor.
+
+A confirmed app bug stays a correct-behavior test. Do not loosen the assertion so the wrong behavior passes.
+
+```ts
+test.info().annotations.push({
+  type: "app-bug",
+  description: "Weekend-only leave is saved. It must be refused.",
+});
+test.fail();
+```

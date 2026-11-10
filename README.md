@@ -122,6 +122,21 @@ npm test
 
 With the dev server and local database running, `node scripts/check-persistence.mjs` checks a temporary 2.5-hour leave request, HR approval, persisted worked hours, and conflict rejection. It removes only its temporary records afterward. Its reserved test date (29 December 2026) must be unused. `node scripts/check-roles.mjs` verifies sign-in, employee creation, editing, role restrictions, and request isolation, then removes its temporary profiles. `node scripts/check-entitlements.mjs` verifies the entitlement summary and that missing HR details block entitled leave. `node scripts/check-leave-types.mjs` verifies the leave-type rules and document access, `node scripts/check-cancellations.mjs` verifies cancellation and HR correction, and `node scripts/check-carry-forward.mjs` verifies the carry-forward preview, limits and whichever date windows are open today, and `node scripts/check-notifications.mjs` verifies the outbox, delivery and reminders. The check scripts delete the emails they cause, so run them only against a local database. The scripts sign in with `SEED_PASSWORD`.
 
+### UI tests
+
+Testers can ask Cursor to exercise a feature in the browser. The run uses a throwaway app at http://127.0.0.1:3200. Setup, example prompts, and how to read a failure are in [Test the app from Cursor](docs/testing/TESTER_GUIDE.md).
+
+```bash
+npm run e2e:env
+npm run test:e2e
+npm run test:e2e:headed
+npm run test:e2e:ui
+npm run test:e2e:report
+npm run e2e:stop
+```
+
+`npm run e2e:env` leaves the throwaway app running so Cursor can explore it. `npm run test:e2e` runs every UI spec and reuses that app when it is already up. `npm run test:e2e:headed` shows the browser, and `npm run test:e2e:ui` opens the Playwright runner. `npm run test:e2e:report` opens the HTML report. `npm run e2e:stop` removes the throwaway database.
+
 ## Prisma schema changes
 
 The schema lives in `prisma/schema.prisma`. Edit its models, then create and apply a development migration:

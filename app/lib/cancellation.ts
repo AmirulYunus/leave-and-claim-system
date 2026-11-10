@@ -17,6 +17,8 @@ export function cancellationKind(input: {
   reason: string;
   today: string;
 }): { kind: CancellationKind; error?: undefined } | { error: string } {
+  if (input.actorId !== input.employeeId && !input.actorCanReview)
+    return { error: "Request not found." };
   const reason = input.reason.trim();
   if (!reason || reason.length > 500)
     return { error: "Give a reason of up to 500 characters." };
@@ -33,7 +35,6 @@ export function cancellationKind(input: {
       };
     return { kind: "Cancellation" };
   }
-  if (!input.actorCanReview) return { error: "Request not found." };
   if (input.category === "Emergency leave" && started)
     return { kind: "Correction" };
   return {
